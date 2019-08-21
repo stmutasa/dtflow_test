@@ -1,0 +1,67 @@
+TensorFlow 2.0 Upgrade Script
+-----------------------------
+Converted 1 files
+Detected 3 issues that require attention
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+File: Distributed3.py
+--------------------------------------------------------------------------------
+Distributed3.py:69:25: WARNING: Changing dataset.make_initializable_iterator() to tf.compat.v1.data.make_initializable_iterator(dataset). Please check this transformation.
+
+Distributed3.py:81:22: ERROR: Using member tf.contrib.framework.get_or_create_global_step in deprecated module tf.contrib. tf.contrib.framework.get_or_create_global_step cannot be converted automatically. tf.contrib will not be distributed with TensorFlow 2.0, please consider an alternative in non-contrib TensorFlow, a community-maintained repository such as tensorflow/addons, or fork the required code.
+Distributed3.py:248:18: ERROR: Using member tf.contrib.framework.get_or_create_global_step in deprecated module tf.contrib. tf.contrib.framework.get_or_create_global_step cannot be converted automatically. tf.contrib will not be distributed with TensorFlow 2.0, please consider an alternative in non-contrib TensorFlow, a community-maintained repository such as tensorflow/addons, or fork the required code.
+================================================================================
+Detailed log follows:
+
+================================================================================
+--------------------------------------------------------------------------------
+Processing file 'Distributed3.py'
+ outputting to 'Distributed4.py'
+--------------------------------------------------------------------------------
+
+50:4: INFO: Renamed 'tf.set_random_seed' to 'tf.compat.v1.set_random_seed'
+69:25: WARNING: Changing dataset.make_initializable_iterator() to tf.compat.v1.data.make_initializable_iterator(dataset). Please check this transformation.
+
+78:19: INFO: Renamed 'tf.global_variables_initializer' to 'tf.compat.v1.global_variables_initializer'
+81:22: ERROR: Using member tf.contrib.framework.get_or_create_global_step in deprecated module tf.contrib. tf.contrib.framework.get_or_create_global_step cannot be converted automatically. tf.contrib will not be distributed with TensorFlow 2.0, please consider an alternative in non-contrib TensorFlow, a community-maintained repository such as tensorflow/addons, or fork the required code.
+84:17: INFO: Renamed 'tf.ConfigProto' to 'tf.compat.v1.ConfigProto'
+88:15: INFO: Renamed 'tf.train.StopAtStepHook' to 'tf.estimator.StopAtStepHook'
+89:15: INFO: Renamed 'tf.train.StepCounterHook' to 'tf.estimator.StepCounterHook'
+93:13: INFO: Renamed 'tf.train.MonitoredTrainingSession' to 'tf.compat.v1.train.MonitoredTrainingSession'
+171:13: INFO: `name` passed to `name_scope`. Because you may be re-entering an existing scope, it is not safe to convert automatically,  the v2 name_scope does not support re-entering scopes by name.
+
+171:13: INFO: Renamed 'tf.name_scope' to 'tf.compat.v1.name_scope'
+180:13: INFO: `name` passed to `name_scope`. Because you may be re-entering an existing scope, it is not safe to convert automatically,  the v2 name_scope does not support re-entering scopes by name.
+
+180:13: INFO: Renamed 'tf.name_scope' to 'tf.compat.v1.name_scope'
+183:23: INFO: Renamed 'tf.placeholder' to 'tf.compat.v1.placeholder'
+184:21: INFO: Renamed 'tf.placeholder' to 'tf.compat.v1.placeholder'
+200:9: INFO: `name` passed to `name_scope`. Because you may be re-entering an existing scope, it is not safe to convert automatically,  the v2 name_scope does not support re-entering scopes by name.
+
+200:9: INFO: Renamed 'tf.name_scope' to 'tf.compat.v1.name_scope'
+203:25: INFO: Renamed 'tf.random_normal' to 'tf.random.normal'
+204:25: INFO: Renamed 'tf.random_normal' to 'tf.random.normal'
+207:9: INFO: `name` passed to `name_scope`. Because you may be re-entering an existing scope, it is not safe to convert automatically,  the v2 name_scope does not support re-entering scopes by name.
+
+207:9: INFO: Renamed 'tf.name_scope' to 'tf.compat.v1.name_scope'
+212:9: INFO: `name` passed to `name_scope`. Because you may be re-entering an existing scope, it is not safe to convert automatically,  the v2 name_scope does not support re-entering scopes by name.
+
+212:9: INFO: Renamed 'tf.name_scope' to 'tf.compat.v1.name_scope'
+232:9: INFO: `name` passed to `name_scope`. Because you may be re-entering an existing scope, it is not safe to convert automatically,  the v2 name_scope does not support re-entering scopes by name.
+
+232:9: INFO: Renamed 'tf.name_scope' to 'tf.compat.v1.name_scope'
+234:15: INFO: Added keywords to args of function 'tf.reduce_mean'
+234:31: INFO: Added keywords to args of function 'tf.reduce_sum'
+234:31: INFO: Renamed keyword argument for tf.reduce_sum from reduction_indices to axis
+234:54: INFO: Renamed 'tf.log' to 'tf.math.log'
+248:18: ERROR: Using member tf.contrib.framework.get_or_create_global_step in deprecated module tf.contrib. tf.contrib.framework.get_or_create_global_step cannot be converted automatically. tf.contrib will not be distributed with TensorFlow 2.0, please consider an alternative in non-contrib TensorFlow, a community-maintained repository such as tensorflow/addons, or fork the required code.
+251:9: INFO: `name` passed to `name_scope`. Because you may be re-entering an existing scope, it is not safe to convert automatically,  the v2 name_scope does not support re-entering scopes by name.
+
+251:9: INFO: Renamed 'tf.name_scope' to 'tf.compat.v1.name_scope'
+254:20: INFO: Renamed 'tf.train.GradientDescentOptimizer' to 'tf.compat.v1.train.GradientDescentOptimizer'
+263:7: INFO: Renamed 'tf.gfile.Exists' to 'tf.io.gfile.exists'
+264:8: INFO: Renamed 'tf.gfile.DeleteRecursively' to 'tf.io.gfile.rmtree'
+265:4: INFO: Renamed 'tf.gfile.MakeDirs' to 'tf.io.gfile.makedirs'
+266:4: INFO: Renamed 'tf.app.run' to 'tf.compat.v1.app.run'
+--------------------------------------------------------------------------------
+
