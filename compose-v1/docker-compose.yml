@@ -1,0 +1,31 @@
+# Define a docker compose yaml file that initializes the server and workers
+version: '3.7'
+
+services:
+  ps0:
+    image: stmutasa/dtflow_test:v1
+    network_mode: "host"
+    volumes:
+        - ..:/dtflow_test
+    stdin_open: true
+    tty: true
+    command:
+        ["python3", "/dtflow_test/Distributed2.py", "--ps_hosts=localhost:2222", "--worker_hosts=localhost:2223,localhost:2224", "--job_name=ps", "--task_index=0"]
+
+  # The first worker container
+  worker0:
+    image: stmutasa/dtflow_test:v1
+    network_mode: "host"
+    volumes:
+        - ..:/dtflow_test
+    command:
+      ["python3", "/dtflow_test/Distributed2.py", "--ps_hosts=localhost:2222", "--worker_hosts=localhost:2223,localhost:2224", "--job_name=worker", "--task_index=0"]
+
+  # The second worker container
+  worker1:
+    image: stmutasa/dtflow_test:v1
+    network_mode: "host"
+    volumes:
+        - ..:/dtflow_test
+    command:
+      ["python3", "/dtflow_test/Distributed2.py", "--ps_hosts=localhost:2222", "--worker_hosts=localhost:2223,localhost:2224", "--job_name=worker", "--task_index=1"]
