@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker-cluster-ip-service
+spec:
+  type: ClusterIP
+  # Where to redirect traffic
+  selector:
+    slave: worker
+  ports:
+    - port: 5000
+      targetPort: 5000

@@ -1,0 +1,59 @@
+# Deployment configuration template for a slave node worker
+# Must have Cluster IP that references it
+# Must have read access to a persistentVolumeClaim
+# Must Deploy one pod/container per GPU
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-deployment
+
+spec:
+
+  replicas: 1
+
+  selector:
+    matchLabels:
+      slave: worker
+
+  template:
+    metadata:
+      labels:
+        slave: worker
+
+    spec:
+
+      # Persistent volumes to request
+      volumes:
+        - name: worker-storage
+          persistentVolumeClaim:
+            # Must match the metadata
+            claimName: workerdb-persistent-volume-claim
+
+      containers:
+        # Name and source image of the container
+        - name: k8sdistro1
+          image: stmutasa/distributed_test:v3
+
+          # Environment password for storage access
+          env:
+            - name: DBPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dbpassword
+                  key: DBPASSWORD
+
+          # Ports to open up
+          ports:
+            - containerPort: 5000
+
+          # Default commands
+          commands:
+            ["python3", "Distributed2.py", ""--ps_hosts=ps0:2222", ""--worker_hosts=worker-cluster-ip-service:5000", "--job_name=worker", "--task_index=0"]
+
+          # Mount the institutional pvc inside this container
+          volumeMounts:
+
+            # Name must match
+            - name: worker-storage
+            # Where inside the container this storage should be available
+              mountPath: /data
