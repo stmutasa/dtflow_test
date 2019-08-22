@@ -1,11 +1,11 @@
 # Deployment configuration template for a slave node worker
 # Must have Cluster IP that references it
 # Must have read access to a persistentVolumeClaim
-# Must Deploy one pod/container per GPU
+# Must Deploy one pod/container
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: worker-deployment
+  name: worker0-deployment
 
 spec:
 
@@ -13,12 +13,12 @@ spec:
 
   selector:
     matchLabels:
-      slave: worker
+      slave: worker0
 
   template:
     metadata:
       labels:
-        slave: worker
+        slave: worker0
 
     spec:
 
@@ -31,8 +31,8 @@ spec:
 
       containers:
         # Name and source image of the container
-        - name: k8sdistro1
-          image: stmutasa/distributed_test:v3
+        - name: Distributed2
+          image: stmutasa/dtflow_test:v1
 
           # Environment password for storage access
           env:
@@ -48,7 +48,7 @@ spec:
 
           # Default commands
           commands:
-            ["python3", "Distributed2.py", ""--ps_hosts=ps0:2222", ""--worker_hosts=worker-cluster-ip-service:5000", "--job_name=worker", "--task_index=0"]
+            ["python3", "Distributed2.py", "--ps_hosts=ps0-cluster-ip-service:5000", "--worker_hosts=worker0-cluster-ip-service:5000,worker1-cluster-ip-service:5000", "--job_name=worker", "--task_index=0"]
 
           # Mount the institutional pvc inside this container
           volumeMounts:

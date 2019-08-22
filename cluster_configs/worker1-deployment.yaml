@@ -1,0 +1,59 @@
+# Deployment configuration template for a slave node worker
+# Must have Cluster IP that references it
+# Must have read access to a persistentVolumeClaim
+# Must Deploy one pod/container
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker1-deployment
+
+spec:
+
+  replicas: 1
+
+  selector:
+    matchLabels:
+      slave: worker1
+
+  template:
+    metadata:
+      labels:
+        slave: worker1
+
+    spec:
+
+      # Persistent volumes to request
+      volumes:
+        - name: worker-storage
+          persistentVolumeClaim:
+            # Must match the metadata
+            claimName: workerdb-persistent-volume-claim
+
+      containers:
+        # Name and source image of the container
+        - name: Distributed2
+          image: stmutasa/dtflow_test:v1
+
+          # Environment password for storage access
+          env:
+            - name: DBPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dbpassword
+                  key: DBPASSWORD
+
+          # Ports to open up
+          ports:
+            - containerPort: 5000
+
+          # Default commands
+          commands:
+            ["python3", "Distributed2.py", "--ps_hosts=ps0-cluster-ip-service:5000", "--worker_hosts=worker0-cluster-ip-service:5000,worker1-cluster-ip-service:5000", "--job_name=worker", "--task_index=1"]
+
+          # Mount the institutional pvc inside this container
+          volumeMounts:
+
+            # Name must match
+            - name: worker-storage
+            # Where inside the container this storage should be available
+              mountPath: /data

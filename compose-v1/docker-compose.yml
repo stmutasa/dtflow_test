@@ -16,6 +16,7 @@ services:
   worker0:
     image: stmutasa/dtflow_test:v1
     network_mode: "host"
+    # Map the cwd to the container /dtflow_test folder
     volumes:
         - ..:/dtflow_test
     command:

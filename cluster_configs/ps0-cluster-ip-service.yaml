@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: worker-cluster-ip-service
+  name: ps0-cluster-ip-service
 spec:
   type: ClusterIP
   # Where to redirect traffic
   selector:
-    slave: worker
+    slave: ps0
   ports:
     - port: 5000
       targetPort: 5000
