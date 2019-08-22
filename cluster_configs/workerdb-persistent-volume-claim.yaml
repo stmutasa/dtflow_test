@@ -6,7 +6,9 @@ metadata:
 
 # The spec
 spec:
+  # Allow many pods to access this
   accessModes:
+#    - ReadWriteMany
     - ReadWriteOnce
   resources:
     requests:

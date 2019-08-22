@@ -23,21 +23,21 @@ spec:
     spec:
       containers:
         # Name and source image of the container
-        - name: Distributed2
+        - name: ps0
           image: stmutasa/dtflow_test:v1
 
-          # Environment password for storage access
-          env:
-            - name: DBPASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: dbpassword
-                  key: DBPASSWORD
+#          # Environment password for storage access
+#          env:
+#            - name: DBPASSWORD
+#              valueFrom:
+#                secretKeyRef:
+#                  name: dbpassword
+#                  key: DBPASSWORD
 
           # Ports to open up
           ports:
             - containerPort: 5000
 
           # Default commands
-          commands:
-            ["python3", "Distributed2.py", "--ps_hosts=ps0-cluster-ip-service:5000", "--worker_hosts=worker0-cluster-ip-service:5000,worker1-cluster-ip-service:5000", "--job_name=ps", "--task_index=0"]
+          command: ["python3"]
+          args: ["Distributed2.py", "--ps_hosts=ps0-cluster-ip-service:5000", "--worker_hosts=worker0-cluster-ip-service:5001,worker1-cluster-ip-service:5002", "--job_name=ps", "--task_index=0"]

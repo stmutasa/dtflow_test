@@ -8,5 +8,5 @@ spec:
   selector:
     slave: worker1
   ports:
-    - port: 5000
-      targetPort: 5000
+    - port: 5002
+      targetPort: 5002
