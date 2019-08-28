@@ -2,30 +2,34 @@
 Distributed tensorflow example.
 
 We aim to create a program that starts an arbitrary amount of containers
-and networks them together with the goal of making a distributed computing server
+and networks them together with the goal of making a distributed computing tensorflow system
+In this case, it will be a synchronized training session.
 
-LOG Device placement results:
-- Weights and biases being placed on parameter servers in round robin - CORRECT
-- Convolutions being placed on current worker - CORRECT
-- Nothing being placed on any other worker from this worker - CORRECT
-- Global step var being placed on PS0 - CORRECT
+Note this uses the old tensorflow distributed computing libraries introduced in 0.10:
+ https://github.com/tensorflow/examples/blob/master/community/en/docs/deploy/distributed.md. The new version
+at https://www.tensorflow.org/guide/distribute_strategy does not currently support custom training loops.
+
+LOG Device placement results after sanity checks.
+- Weights and biases being placed on parameter servers in round robin
+- Convolutions being placed on current worker
+- Nothing being placed on any other worker from this worker
+- Global step var being placed on PS0
 - train/gradients/convolutions placed on current worker
 - train/GradientDescent/update_b1 placed on parameter servers (apply gradient descent)
-- Input data being placed on the specific worker - CORRECT
+- Input data being placed on the specific worker
 
 TODO:
-- Sanity checks
-- Get a real example running
+- Custom dataset
+- Deploy on K8's cluster: This code is working on a single minikube node in the "kubernetes" branch of this project
 
 """
 
-# This is the baseline file that each worker will have reference to.
-
+# This is the baseline process that every container will have a copy of
 import tensorflow as tf
-import os, time, datetime
+import time, datetime
 import numpy as np
 
-# Define command line arguments to define how it will run as ps or worker
+# Define command line arguments to define how this process will run. TF.app.flags is similar to sys.argv
 FLAGS = tf.app.flags.FLAGS
 
 # Define some of the command line arguments
@@ -41,11 +45,14 @@ tf.app.flags.DEFINE_string('job_name', 'worker',
 tf.app.flags.DEFINE_string('worker_hosts', 'localhost:3224,localhost:3225',
                            'Comma separated list of hostname:port pairs')
 
+tf.app.flags.DEFINE_integer('batch_size', 10,
+                            'The Per-worker batch size')
+
 # Set tensorflow verbosity: 0 = all, 1 = no info, 2 = no info/warning, 3 = nothing
 #os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-# config
-batch_size = 10
+# This represents the per worker batch size
+batch_size = FLAGS.batch_size
 
 # We Want to start with a low learning rate n to stabilize distributed training, then increase to k*n after
 # 5 epochs with k representing number of replicas per the paper by He et. al
@@ -57,10 +64,11 @@ def main(_):
     ps_hosts = FLAGS.ps_hosts.split(",")
     worker_hosts = FLAGS.worker_hosts.split(",")
 
-    # Create a cluster from the parameter server and worker hosts.
+    # Create a cluster specification from the parameter server and worker hosts. Every process has a copy of this
+    # To know which other systems it has to wait on
     cluster = tf.train.ClusterSpec({"ps": ps_hosts, "worker": worker_hosts})
 
-    # Create and start a server for the local task.
+    # Create and start this specific server
     server = tf.distribute.Server(cluster,
                            job_name=FLAGS.job_name,
                            task_index=FLAGS.task_index)
@@ -77,22 +85,25 @@ def main(_):
 
     elif FLAGS.job_name == "worker":
 
+        # Everything run within the context of replica_device_setter will
         # Place any following variables on parameter servers in a round robin manner
         # Everything else is placed on the first device of the worker specified.
+        # You can check this with log_device_placement below
         with tf.device(tf.compat.v1.train.replica_device_setter(worker_device="/job:worker/task:%d" % FLAGS.task_index, cluster=cluster)):
 
-            # Retreive the data iterator object
+            # Run the input custom function and bring back the data iterator object
             dataset_iterator = generate_inputs(batch_size)
 
-            # Run the training step. We return the optimizer too to create the sync hook
-            # This is lazy programming, should just make more classes
+            # Run the training step custom function. We return the optimizer too to create the sync hook
             train_op, opt = train_step(dataset_iterator.get_next(), global_batch_size)
 
-            # Global step defined on a random ps
+            # Global step gets saved on the first parameter server (during my tests)
             global_step = tf.train.get_or_create_global_step()
 
         """
         Now set up the session for this process
+        tf.train.MonitoredTrainingSession, takes care of session initialization, saving, restoring
+        and closing when done or an error occurs. It also appears to have special handling of distributed sessions
         """
 
         class _LoggerHook(tf.train.SessionRunHook):
@@ -124,14 +135,16 @@ def main(_):
         config = tf.compat.v1.ConfigProto(log_device_placement=False, allow_soft_placement=True)
         config.gpu_options.allow_growth = True
 
-        # Make a sync replicas hook that handles init and queues. True if this is chief worker
+        # Make a sync replicas hook that handles initialization and queues. This is key to making the process
+        # synchronized (not needed if asynchronous). The 1st parameter needs to know if this is the master worker
+        # Num tokens=0 seems to be needed to prevent the master worker from hijacking all the tokens initially
         sync_replicas_hook = opt.make_session_run_hook((FLAGS.task_index == 0), num_tokens=0)
 
-        # The StopAtStepHook handles stopping after running given steps.
+        # Group our hooks for the monitored train sessions.
         hooks=[tf.train.StopAtStepHook(last_step=1000000), sync_replicas_hook, tf.train.NanTensorHook(train_op), _LoggerHook()]
 
-        # The MonitoredTrainingSession takes care of session initialization, saving, restoring
-        # and closing when done or an error occurs.
+        # The MonitoredTrainingSession takes care of a lot of boilerplate code. It also needs to know if this is
+        # The master worker
         print ('\n******Worker %s: Starting monitored session...\n' %FLAGS.task_index)
         with tf.compat.v1.train.MonitoredTrainingSession(master=server.target,
                                                 is_chief=(FLAGS.task_index == 0),
@@ -139,13 +152,14 @@ def main(_):
                                                 config=config) as mon_sess:
 
             print('\n******Worker %s: Session started!! Starting loops\n' % FLAGS.task_index)
+
+            # tf.data.dataset initializer
             mon_sess.run(dataset_iterator.initializer)
 
             while not mon_sess.should_stop():
 
                 # Run a training step
                 ce, st = mon_sess.run([train_op, global_step])
-                #print('Cross Entropy %s, step %s' % (ce, st))
 
             if mon_sess.should_stop():
                 print ('Training Done, Shutting down...')
@@ -229,7 +243,7 @@ def define_model(inputs):
         W1 = tf.compat.v1.get_variable('W1', [784, 100], dtype=tf.float32, initializer=tf.initializers.he_normal(), trainable=True)
         W2 = tf.compat.v1.get_variable('W2', [100, 10], dtype=tf.float32, initializer=tf.initializers.he_normal(), trainable=True)
 
-    # Actual calculations, copied on to all the workers
+    # Actual calculations (aka our computation graph), this time COPIED on to all the workers
     with tf.name_scope('convolutions'):
 
         # y is our prediction
@@ -242,6 +256,7 @@ def define_model(inputs):
 
 
 def calculate_loss(logits, labels):
+
     """
     Calculates the loss
     :param logits: Logits, output from the model
@@ -282,10 +297,13 @@ def calculate_optimizer(loss):
         Prevents stale gradients but drawbacks are that this will slow us on a heterogenous cluster
         Uses a token system to prevent dead workers from stopping training
         """
+
+        # First retreive the number of replicas
         replicas = len(FLAGS.worker_hosts.split(","))
         print('\n*******Number of Replicas: %s\n*********'%replicas)
 
-        # Also where you would maintain moving averages with the variable_averages argument
+        # Then introduce the custom sync_replicas optimizer
+        # This is also where you would sync the moving averages with the variable_averages argument
         optimizer = tf.compat.v1.train.SyncReplicasOptimizer(optimizer,
                                                              replicas_to_aggregate=replicas,
                                                              total_num_replicas=replicas)
