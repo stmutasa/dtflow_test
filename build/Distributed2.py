@@ -34,7 +34,7 @@ FLAGS = tf.app.flags.FLAGS
 
 # Define some of the command line arguments
 tf.app.flags.DEFINE_integer('task_index', 0,
-                           'Index of task within the job')
+                            'Index of task within the job')
 
 tf.app.flags.DEFINE_string('ps_hosts', 'localhost:3222',
                            'Comma separated list of hostname:port pairs')
@@ -59,7 +59,7 @@ tf.app.flags.DEFINE_float('l2_gamma', 1e-4, """ The gamma value for regularizati
 tf.app.flags.DEFINE_float('learning_rate', 3e-3, """Initial learning rate""")
 
 # Set tensorflow verbosity: 0 = all, 1 = no info, 2 = no info/warning, 3 = nothing
-#os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # This represents the per worker batch size
 batch_size = FLAGS.batch_size
@@ -68,8 +68,8 @@ batch_size = FLAGS.batch_size
 # 5 epochs with k representing number of replicas per the paper by He et. al
 learning_rate = FLAGS.learning_rate
 
-def main(_):
 
+def main(_):
     # Parse the command line arguments to get a lists of parameter servers and hosts
     ps_hosts = FLAGS.ps_hosts.split(",")
     worker_hosts = FLAGS.worker_hosts.split(",")
@@ -80,8 +80,8 @@ def main(_):
 
     # Create and start this specific server
     server = tf.distribute.Server(cluster,
-                           job_name=FLAGS.job_name,
-                           task_index=FLAGS.task_index)
+                                  job_name=FLAGS.job_name,
+                                  task_index=FLAGS.task_index)
 
     # Calculate the global batch size
     global_batch_size = batch_size * len(worker_hosts)
@@ -155,11 +155,11 @@ def main(_):
 
         # The MonitoredTrainingSession takes care of a lot of boilerplate code. It also needs to know if this is
         # The master worker
-        print ('\n******Worker %s: Starting monitored session...\n' %FLAGS.task_index)
+        print('\n******Worker %s: Starting monitored session...\n' % FLAGS.task_index)
         with tf.compat.v1.train.MonitoredTrainingSession(master=server.target,
-                                                is_chief=(FLAGS.task_index == 0),
-                                                hooks=hooks,
-                                                config=config) as mon_sess:
+                                                         is_chief=(FLAGS.task_index == 0),
+                                                         hooks=hooks,
+                                                         config=config) as mon_sess:
 
             print('\n******Worker %s: Session started!! Starting loops\n' % FLAGS.task_index)
 
@@ -167,18 +167,17 @@ def main(_):
             mon_sess.run(dataset_iterator.initializer)
 
             while not mon_sess.should_stop():
-
                 # Run a training step
                 ce, st = mon_sess.run([train_op, global_step])
 
             if mon_sess.should_stop():
-                print ('Training Done, Shutting down...')
+                print('Training Done, Shutting down...')
                 pass
 
                 # Terminate everything here
 
-def train_step(inputs, global_batch_size):
 
+def train_step(inputs, global_batch_size):
     """
     Defines one step of the training.
     :param inputs: Inputs from the data iterator
@@ -199,7 +198,7 @@ def train_step(inputs, global_batch_size):
     loss = calculate_loss(logits, labels)
 
     # Scale the total loss by the GLOBAL and not local (replica) batch size.
-    loss *= (1.0/global_batch_size)
+    loss *= (1.0 / global_batch_size)
 
     # Add in L2 term
     loss += l2_loss
@@ -211,7 +210,6 @@ def train_step(inputs, global_batch_size):
 
 
 def generate_inputs(local_batch_size):
-
     """
     Function to generate inputs and return a tf.data iterator
     :param local_batch_size: total batch size for this worker
@@ -227,7 +225,6 @@ def generate_inputs(local_batch_size):
 
 
 def define_model(inputs):
-
     """
     Defines the model
     :param inputs: tf.data inputs
@@ -239,7 +236,6 @@ def define_model(inputs):
 
 
 def calculate_loss(logits, labels):
-
     """
     Calculates the loss
     :param logits: Logits, output from the model
@@ -260,7 +256,6 @@ def calculate_loss(logits, labels):
 
 
 def calculate_optimizer(loss):
-
     """
     Calculates the gradients and returns the tensorflow optimizer object
     This is also the point of synchronization
@@ -276,7 +271,6 @@ def calculate_optimizer(loss):
 
     # Specify the optimizer name scope
     with tf.name_scope('train'):
-
         # Construct the optimizer
         optimizer = tf.train.AdamOptimizer(learning_rate)
 
@@ -296,7 +290,7 @@ def calculate_optimizer(loss):
 
         # First retreive the number of replicas
         replicas = len(FLAGS.worker_hosts.split(","))
-        print('\n*******Number of Replicas: %s\n*********'%replicas)
+        print('\n*******Number of Replicas: %s\n*********' % replicas)
 
         # Then introduce the custom sync_replicas optimizer
         # This is also where you would sync the moving averages with the variable_averages argument
@@ -315,7 +309,6 @@ def calculate_optimizer(loss):
         # Control graph execution. i.e. before you return, make sure train op is evaluated
         with tf.control_dependencies([train_op, variable_averages_op]):
             return train_op, optimizer
-
 
 
 if __name__ == "__main__":
