@@ -27,7 +27,7 @@ TODO:
 # This is the baseline process that every container will have a copy of
 import tensorflow as tf
 import time, datetime
-import numpy as np
+import Hip_fracture_utils as utils
 
 # Define command line arguments to define how this process will run. TF.app.flags is similar to sys.argv
 FLAGS = tf.app.flags.FLAGS
@@ -36,17 +36,27 @@ FLAGS = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_integer('task_index', 0,
                            'Index of task within the job')
 
-tf.app.flags.DEFINE_string('ps_hosts', 'localhost:3222,localhost:3223',
+tf.app.flags.DEFINE_string('ps_hosts', 'localhost:3222',
                            'Comma separated list of hostname:port pairs')
 
-tf.app.flags.DEFINE_string('job_name', 'worker',
+tf.app.flags.DEFINE_string('job_name', 'ps',
                            'Either ps or worker')
 
-tf.app.flags.DEFINE_string('worker_hosts', 'localhost:3224,localhost:3225',
+# tf.app.flags.DEFINE_string('worker_hosts', 'localhost:3224,localhost:3225',
+#                            'Comma separated list of hostname:port pairs')
+
+tf.app.flags.DEFINE_string('worker_hosts', 'localhost:3224',
                            'Comma separated list of hostname:port pairs')
 
-tf.app.flags.DEFINE_integer('batch_size', 10,
-                            'The Per-worker batch size')
+"""
+Network flags
+"""
+
+tf.app.flags.DEFINE_integer('batch_size', 128, """Number of images to process in a batch.""")
+tf.app.flags.DEFINE_integer('num_classes', 2, """ Number of classes""")
+tf.app.flags.DEFINE_float('dropout_factor', 0.5, """ Keep probability""")
+tf.app.flags.DEFINE_float('l2_gamma', 1e-4, """ The gamma value for regularization loss""")
+tf.app.flags.DEFINE_float('learning_rate', 3e-3, """Initial learning rate""")
 
 # Set tensorflow verbosity: 0 = all, 1 = no info, 2 = no info/warning, 3 = nothing
 #os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -56,7 +66,7 @@ batch_size = FLAGS.batch_size
 
 # We Want to start with a low learning rate n to stabilize distributed training, then increase to k*n after
 # 5 epochs with k representing number of replicas per the paper by He et. al
-learning_rate = 0.0005
+learning_rate = FLAGS.learning_rate
 
 def main(_):
 
@@ -117,7 +127,7 @@ def main(_):
                 return tf.train.SessionRunArgs(train_op)
 
             def after_run(self, run_context, run_values):
-                if self._step % 200 == 0:
+                if self._step % 20 == 0:
                     current_time = time.time()
                     duration = current_time - self._start_time
                     self._start_time = current_time
@@ -132,7 +142,7 @@ def main(_):
                                         examples_per_sec, sec_per_batch))
 
         # Define the configuration proto for the session.
-        config = tf.compat.v1.ConfigProto(log_device_placement=False, allow_soft_placement=True)
+        config = tf.compat.v1.ConfigProto(log_device_placement=True, allow_soft_placement=True)
         config.gpu_options.allow_growth = True
 
         # Make a sync replicas hook that handles initialization and queues. This is key to making the process
@@ -141,7 +151,7 @@ def main(_):
         sync_replicas_hook = opt.make_session_run_hook((FLAGS.task_index == 0), num_tokens=0)
 
         # Group our hooks for the monitored train sessions.
-        hooks=[tf.train.StopAtStepHook(last_step=1000000), sync_replicas_hook, tf.train.NanTensorHook(train_op), _LoggerHook()]
+        hooks = [tf.train.StopAtStepHook(last_step=10000), sync_replicas_hook, tf.train.NanTensorHook(train_op), _LoggerHook()]
 
         # The MonitoredTrainingSession takes care of a lot of boilerplate code. It also needs to know if this is
         # The master worker
@@ -177,16 +187,22 @@ def train_step(inputs, global_batch_size):
     """
 
     # Get the inputs.
-    images, labels = inputs
+    images, labels = inputs['data'], inputs['label2']
+
+    # Define input shape
+    images = tf.reshape(images, [FLAGS.batch_size, 256, 256, 1])
 
     # Calculate the logits
-    logits = define_model(images)
+    logits, l2_loss = define_model(images)
 
     # Calculate loss
     loss = calculate_loss(logits, labels)
 
     # Scale the total loss by the GLOBAL and not local (replica) batch size.
     loss *= (1.0/global_batch_size)
+
+    # Add in L2 term
+    loss += l2_loss
 
     # Return the training operation optimizer
     train_op, opt = calculate_optimizer(loss)
@@ -202,57 +218,24 @@ def generate_inputs(local_batch_size):
     :return:
     """
 
-    # Make a dummy mnist batch
-    dummy_inputs = np.random.uniform(-1.0, 1.0, [200, 784]).astype((np.float32))
-    dummy_labels = np.random.randint(0, 10, [200]).astype(np.float32)
-
-    # Assume the size is the same
-    assert dummy_inputs.shape[0] == dummy_labels.shape[0]
-
-    # Create the dataset object. Shuffle, then batch it, then make it repeat indefinitely
-    dataset= tf.data.Dataset.from_tensor_slices((dummy_inputs, dummy_labels)).shuffle(200).repeat().batch(local_batch_size)
-
-    # Make an initializable iterator
-    iterator = dataset.make_initializable_iterator()
-
-    # Add to collection
-    tf.add_to_collection(tf.GraphKeys.TABLE_INITIALIZERS, iterator.initializer)
+    # Retreive local filenames, exclude the testing files
+    all_files = utils.sdl.retreive_filelist('tfrecords', False, path='data/')
+    filenames = [x for x in all_files if 'Test' not in x]
 
     # Return data as a dictionary
-    return iterator
+    return utils.load_protobuf(filenames, training=True, batch_size=local_batch_size)
 
 
 def define_model(inputs):
 
     """
-    Defines a rudimentary model
+    Defines the model
     :param inputs: tf.data inputs
     :return: The calculated logits
     """
 
-    # Biases to be placed on the ps in round robin
-    with tf.name_scope('biases'):
-
-        b1 = tf.compat.v1.get_variable('b1', [100], dtype=tf.float32, initializer=tf.zeros_initializer, trainable=True)
-        b2 = tf.compat.v1.get_variable('b2', [10], dtype=tf.float32, initializer=tf.zeros_initializer, trainable=True)
-
-    # Weights, for the ps's in round robin
-    with tf.name_scope('weights'):
-
-        # Dummy weights
-        W1 = tf.compat.v1.get_variable('W1', [784, 100], dtype=tf.float32, initializer=tf.initializers.he_normal(), trainable=True)
-        W2 = tf.compat.v1.get_variable('W2', [100, 10], dtype=tf.float32, initializer=tf.initializers.he_normal(), trainable=True)
-
-    # Actual calculations (aka our computation graph), this time COPIED on to all the workers
-    with tf.name_scope('convolutions'):
-
-        # y is our prediction
-        conv1 = tf.add(tf.matmul(inputs, W1), b1)
-        conv1_a = tf.nn.sigmoid(conv1)
-        conv2 = tf.add(tf.matmul(conv1_a, W2), b2)
-        logits = tf.nn.softmax(conv2)
-
-    return logits
+    # Actually returns logits and L2 loss
+    return utils.forward_pass(images=inputs, phase_train=True)
 
 
 def calculate_loss(logits, labels):
@@ -264,10 +247,14 @@ def calculate_loss(logits, labels):
     :return: The total loss
     """
 
-    # Cost function name scope
-    with tf.name_scope('cross_entropy'):
+    # Calculate the loss
+    loss = utils.total_loss(logits, labels)
 
-        loss = tf.reduce_mean(-tf.reduce_sum(tf.cast(labels, tf.float32) * tf.log(logits), reduction_indices=[1]))
+    # Output the losses
+    tf.summary.scalar('Cross Entropy', loss)
+
+    # Add these losses to the collection
+    tf.add_to_collection('losses', loss)
 
     return loss
 
@@ -284,11 +271,20 @@ def calculate_optimizer(loss):
     # Retreive global step variable (saved on ps:0 typically)
     global_step = tf.train.get_or_create_global_step()
 
+    # Print summary of total loss
+    tf.summary.scalar('Total_Loss', loss)
+
     # Specify the optimizer name scope
     with tf.name_scope('train'):
 
         # Construct the optimizer
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+        optimizer = tf.train.AdamOptimizer(learning_rate)
+
+        # Maintain average weights to smooth out training
+        variable_averages = tf.train.ExponentialMovingAverage(0.999, global_step)
+
+        # Applies the average to the variables in the trainable ops collection
+        variable_averages_op = variable_averages.apply(tf.trainable_variables())
 
         """
         This is the point of synchronization by modifying the regular optimizer with the sync_replicas_optimizer.
@@ -306,13 +302,18 @@ def calculate_optimizer(loss):
         # This is also where you would sync the moving averages with the variable_averages argument
         optimizer = tf.compat.v1.train.SyncReplicasOptimizer(optimizer,
                                                              replicas_to_aggregate=replicas,
-                                                             total_num_replicas=replicas)
+                                                             total_num_replicas=replicas,
+                                                             variable_averages=variable_averages,
+                                                             variables_to_average=tf.trainable_variables())
 
         # Construct the training operation
         train_op = optimizer.minimize(loss, global_step=global_step)
 
+        # Add histograms for the trainable variables. i.e. the collection of variables created with Trainable=True
+        for var in tf.trainable_variables(): tf.summary.histogram(var.op.name, var)
+
         # Control graph execution. i.e. before you return, make sure train op is evaluated
-        with tf.control_dependencies([train_op]):
+        with tf.control_dependencies([train_op, variable_averages_op]):
             return train_op, optimizer
 
 
