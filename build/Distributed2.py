@@ -52,7 +52,7 @@ tf.app.flags.DEFINE_string('worker_hosts', 'localhost:3224',
 Network flags
 """
 
-tf.app.flags.DEFINE_integer('batch_size', 128, """Number of images to process in a batch.""")
+tf.app.flags.DEFINE_integer('batch_size', 4, """Number of images to process in a batch.""")
 tf.app.flags.DEFINE_integer('num_classes', 2, """ Number of classes""")
 tf.app.flags.DEFINE_float('dropout_factor', 0.5, """ Keep probability""")
 tf.app.flags.DEFINE_float('l2_gamma', 1e-4, """ The gamma value for regularization loss""")
@@ -142,7 +142,7 @@ def main(_):
                                         examples_per_sec, sec_per_batch))
 
         # Define the configuration proto for the session.
-        config = tf.compat.v1.ConfigProto(log_device_placement=True, allow_soft_placement=True)
+        config = tf.compat.v1.ConfigProto(log_device_placement=False, allow_soft_placement=True)
         config.gpu_options.allow_growth = True
 
         # Make a sync replicas hook that handles initialization and queues. This is key to making the process
@@ -153,18 +153,23 @@ def main(_):
         # Group our hooks for the monitored train sessions.
         hooks = [tf.train.StopAtStepHook(last_step=10000), sync_replicas_hook, tf.train.NanTensorHook(train_op), _LoggerHook()]
 
+        # Scafford object for finalizing the graph
+        scaffold = tf.train.Scaffold(
+            local_init_op=tf.group(tf.local_variables_initializer(), dataset_iterator.initializer))
+
         # The MonitoredTrainingSession takes care of a lot of boilerplate code. It also needs to know if this is
         # The master worker
         print('\n******Worker %s: Starting monitored session...\n' % FLAGS.task_index)
         with tf.compat.v1.train.MonitoredTrainingSession(master=server.target,
                                                          is_chief=(FLAGS.task_index == 0),
                                                          hooks=hooks,
-                                                         config=config) as mon_sess:
+                                                         config=config,
+                                                         scaffold=scaffold) as mon_sess:
 
             print('\n******Worker %s: Session started!! Starting loops\n' % FLAGS.task_index)
 
-            # tf.data.dataset initializer
-            mon_sess.run(dataset_iterator.initializer)
+            # # tf.data.dataset initializer
+            # mon_sess.run(dataset_iterator.initializer)
 
             while not mon_sess.should_stop():
                 # Run a training step
