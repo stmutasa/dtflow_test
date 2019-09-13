@@ -39,7 +39,7 @@ tf.app.flags.DEFINE_integer('task_index', 0,
 tf.app.flags.DEFINE_string('ps_hosts', 'localhost:3222',
                            'Comma separated list of hostname:port pairs')
 
-tf.app.flags.DEFINE_string('job_name', 'ps',
+tf.app.flags.DEFINE_string('job_name', 'worker',
                            'Either ps or worker')
 
 tf.app.flags.DEFINE_string('worker_hosts', 'localhost:3224',
@@ -159,8 +159,13 @@ def main(_):
         # Num tokens=0 seems to be needed to prevent the master worker from hijacking all the tokens initially
         sync_replicas_hook = opt.make_session_run_hook((FLAGS.task_index == 0), num_tokens=0)
 
+        # Make a profiler hook to track memory and gpu usage
+        _ProfilerHook = tf.train.ProfilerHook(save_secs=1500, output_dir='data/checkpoints/',
+                                              show_memory=True, show_dataflow=True)
+
         # Group our hooks for the monitored train sessions.
-        hooks = [tf.train.StopAtStepHook(last_step=10000), sync_replicas_hook, tf.train.NanTensorHook(train_op), _LoggerHook()]
+        hooks = [tf.train.StopAtStepHook(last_step=10000), sync_replicas_hook, tf.train.NanTensorHook(train_op),
+                 _ProfilerHook, _LoggerHook()]
 
         # Scafford object for finalizing the graph
         scaffold = tf.train.Scaffold(
@@ -174,7 +179,8 @@ def main(_):
                                                          config=config,
                                                          scaffold=scaffold,
                                                          checkpoint_dir='data/checkpoints/',
-                                                         save_checkpoint_secs=1200) as mon_sess:
+                                                         save_checkpoint_secs=1200,
+                                                         save_summaries_secs=1000) as mon_sess:
 
             while not mon_sess.should_stop():
 
