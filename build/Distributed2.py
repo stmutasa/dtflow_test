@@ -42,9 +42,6 @@ tf.app.flags.DEFINE_string('ps_hosts', 'localhost:3222',
 tf.app.flags.DEFINE_string('job_name', 'ps',
                            'Either ps or worker')
 
-# tf.app.flags.DEFINE_string('worker_hosts', 'localhost:3224,localhost:3225',
-#                            'Comma separated list of hostname:port pairs')
-
 tf.app.flags.DEFINE_string('worker_hosts', 'localhost:3224',
                            'Comma separated list of hostname:port pairs')
 
@@ -105,10 +102,7 @@ def main(_):
             dataset_iterator = generate_inputs(batch_size)
 
             # Run the training step custom function. We return the optimizer too to create the sync hook
-            train_op, opt = train_step(dataset_iterator.get_next(), global_batch_size)
-
-            # Global step gets saved on the first parameter server (during my tests)
-            global_step = tf.train.get_or_create_global_step()
+            train_op, opt, loss = train_step(dataset_iterator.get_next(), global_batch_size)
 
         """
         Now set up the session for this process
@@ -119,15 +113,30 @@ def main(_):
         class _LoggerHook(tf.train.SessionRunHook):
 
             def begin(self):
+                # Called before the session is created
+                print('\n******Worker %s: Starting monitored session...\n' % FLAGS.task_index)
+
+                # Retreive local filenames, exclude the testing files
+                afs = utils.sdl.retreive_filelist('tfrecords', False, path='data/')
+                fns = [x for x in afs if 'Test' not in x]
+                print('*' * 10, 'Files for worker %s: %s' % (FLAGS.task_index, fns))
+
                 self._step = -1
                 self._start_time = time.time()
 
+            def after_create_session(self, session, coord):
+                # Called after the session is made and graph is finalized
+                print('\n******Worker %s: Session started!! Starting loops\n' % FLAGS.task_index)
+
             def before_run(self, run_context):
+                # Called before each step
                 self._step += 1
-                return tf.train.SessionRunArgs(train_op)
+                return tf.train.SessionRunArgs(loss)
 
             def after_run(self, run_context, run_values):
+                # Called after each step, only if successful
                 if self._step % 20 == 0:
+                    # Display the elapsed time
                     current_time = time.time()
                     duration = current_time - self._start_time
                     self._start_time = current_time
@@ -138,7 +147,7 @@ def main(_):
 
                     format_str = ('%s: step %d, loss = %.2f (%.1f examples/sec; %.3f '
                                   'sec/batch)')
-                    print(format_str % (datetime.datetime.now(), self._step, loss_value,
+                    print(format_str % (datetime.datetime.now(), self._step, (loss_value * 1e6),
                                         examples_per_sec, sec_per_batch))
 
         # Define the configuration proto for the session.
@@ -159,21 +168,18 @@ def main(_):
 
         # The MonitoredTrainingSession takes care of a lot of boilerplate code. It also needs to know if this is
         # The master worker
-        print('\n******Worker %s: Starting monitored session...\n' % FLAGS.task_index)
         with tf.compat.v1.train.MonitoredTrainingSession(master=server.target,
                                                          is_chief=(FLAGS.task_index == 0),
                                                          hooks=hooks,
                                                          config=config,
-                                                         scaffold=scaffold) as mon_sess:
-
-            print('\n******Worker %s: Session started!! Starting loops\n' % FLAGS.task_index)
-
-            # # tf.data.dataset initializer
-            # mon_sess.run(dataset_iterator.initializer)
+                                                         scaffold=scaffold,
+                                                         checkpoint_dir='data/checkpoints/',
+                                                         save_checkpoint_secs=1200) as mon_sess:
 
             while not mon_sess.should_stop():
+
                 # Run a training step
-                ce, st = mon_sess.run([train_op, global_step])
+                mon_sess.run(train_op)
 
             if mon_sess.should_stop():
                 print('Training Done, Shutting down...')
@@ -211,7 +217,7 @@ def train_step(inputs, global_batch_size):
     # Return the training operation optimizer
     train_op, opt = calculate_optimizer(loss)
 
-    return train_op, opt
+    return train_op, opt, loss
 
 
 def generate_inputs(local_batch_size):
@@ -224,6 +230,8 @@ def generate_inputs(local_batch_size):
     # Retreive local filenames, exclude the testing files
     all_files = utils.sdl.retreive_filelist('tfrecords', False, path='data/')
     filenames = [x for x in all_files if 'Test' not in x]
+
+    print('*' * 10, 'Files for worker %s: %s' % (FLAGS.task_index, filenames))
 
     # Return data as a dictionary
     return utils.load_protobuf(filenames, training=True, batch_size=local_batch_size)

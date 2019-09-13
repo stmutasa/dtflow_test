@@ -3,19 +3,19 @@ version: '3.7'
 
 services:
   ps0:
-    image: stmutasa/dtflow_test:cumc2
+    image: stmutasa/dtflow_test:cumc3
     network_mode: "host"
     volumes:
       - ../data:/app/data
     stdin_open: true
     tty: true
     command:
-      # ["python3", "Distributed2.py", "--ps_hosts=192.168.0.12:2222", "--worker_hosts=192.168.0.33:2223,192.168.0.12:2224", "--job_name=ps", "--task_index=0"]
+      #["python3", "Distributed2.py", "--ps_hosts=192.168.0.12:2222", "--worker_hosts=192.168.0.33:2223,192.168.0.12:2224", "--job_name=ps", "--task_index=0"]
       ["python3", "Distributed2.py", "--ps_hosts=localhost:2222", "--worker_hosts=localhost:2223,localhost:2224", "--job_name=ps", "--task_index=0"]
 
   # The first worker container
   worker0:
-    image: stmutasa/dtflow_test:cumc2
+    image: stmutasa/dtflow_test:cumc3
     network_mode: "host"
     # Map the cwd to the container /dtflow_test folder
     volumes:
@@ -26,12 +26,10 @@ services:
 
   # The second worker container
   worker1:
-    image: stmutasa/dtflow_test:cumc2
+    image: stmutasa/dtflow_test:cumc3
     network_mode: "host"
-    depends_on:
-      - worker0
     volumes:
       - ../data:/app/data
     command:
-      # ["python3", "Distributed2.py", "--ps_hosts=192.168.0.12:2222", "--worker_hosts=192.168.0.33:2223,192.168.0.12:2224", "--job_name=worker", "--task_index=1"]
+      #["python3", "Distributed2.py", "--ps_hosts=192.168.0.12:2222", "--worker_hosts=192.168.0.12:2223,192.168.0.33:2224", "--job_name=worker", "--task_index=1"]
       ["python3", "Distributed2.py", "--ps_hosts=localhost:2222", "--worker_hosts=localhost:2223,localhost:2224", "--job_name=worker", "--task_index=1"]
