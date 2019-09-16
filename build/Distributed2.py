@@ -49,11 +49,13 @@ tf.app.flags.DEFINE_string('worker_hosts', 'localhost:3224',
 Network flags
 """
 
-tf.app.flags.DEFINE_integer('batch_size', 4, """Number of images to process in a batch.""")
+tf.app.flags.DEFINE_integer('batch_size', 256, """Number of images to process in a batch.""")
 tf.app.flags.DEFINE_integer('num_classes', 2, """ Number of classes""")
 tf.app.flags.DEFINE_float('dropout_factor', 0.5, """ Keep probability""")
 tf.app.flags.DEFINE_float('l2_gamma', 1e-4, """ The gamma value for regularization loss""")
 tf.app.flags.DEFINE_float('learning_rate', 3e-3, """Initial learning rate""")
+tf.app.flags.DEFINE_integer('epoch_size', 2200, """How many images were loaded""")
+tf.app.flags.DEFINE_integer('num_epochs', 450, """Number of epochs to run""")
 
 # Set tensorflow verbosity: 0 = all, 1 = no info, 2 = no info/warning, 3 = nothing
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -67,6 +69,7 @@ learning_rate = FLAGS.learning_rate
 
 
 def main(_):
+
     # Parse the command line arguments to get a lists of parameter servers and hosts
     ps_hosts = FLAGS.ps_hosts.split(",")
     worker_hosts = FLAGS.worker_hosts.split(",")
@@ -104,15 +107,25 @@ def main(_):
             # Run the training step custom function. We return the optimizer too to create the sync hook
             train_op, opt, loss = train_step(dataset_iterator.get_next(), global_batch_size)
 
+            # -------------------  Housekeeping functions  ----------------------
+
+            # Merge the summaries
+            all_summaries = tf.summary.merge_all()
+
         """
         Now set up the session for this process
         tf.train.MonitoredTrainingSession, takes care of session initialization, saving, restoring
         and closing when done or an error occurs. It also appears to have special handling of distributed sessions
         """
 
+        # Set the intervals
+        max_steps = int((FLAGS.epoch_size / FLAGS.batch_size) * FLAGS.num_epochs)
+        checkpoint_steps = int((FLAGS.epoch_size / FLAGS.batch_size) * FLAGS.num_epochs) // 100
+
         class _LoggerHook(tf.train.SessionRunHook):
 
             def begin(self):
+
                 # Called before the session is created
                 print('\n******Worker %s: Starting monitored session...\n' % FLAGS.task_index)
 
@@ -125,17 +138,21 @@ def main(_):
                 self._start_time = time.time()
 
             def after_create_session(self, session, coord):
+
                 # Called after the session is made and graph is finalized
                 print('\n******Worker %s: Session started!! Starting loops\n' % FLAGS.task_index)
 
             def before_run(self, run_context):
+
                 # Called before each step
                 self._step += 1
                 return tf.train.SessionRunArgs(loss)
 
             def after_run(self, run_context, run_values):
+
                 # Called after each step, only if successful
-                if self._step % 20 == 0:
+                if self._step % checkpoint_steps == 0:
+
                     # Display the elapsed time
                     current_time = time.time()
                     duration = current_time - self._start_time
@@ -163,13 +180,15 @@ def main(_):
         _ProfilerHook = tf.train.ProfilerHook(save_secs=1500, output_dir='data/checkpoints/',
                                               show_memory=True, show_dataflow=True)
 
+        # Make a summary hook
+        summary_hook = tf.train.SummarySaverHook(save_secs=1000, output_dir='data/checkpoints/', summary_op=all_summaries)
+
         # Group our hooks for the monitored train sessions.
-        hooks = [tf.train.StopAtStepHook(last_step=10000), sync_replicas_hook, tf.train.NanTensorHook(train_op),
-                 _ProfilerHook, _LoggerHook()]
+        hooks = [tf.train.StopAtStepHook(last_step=max_steps), sync_replicas_hook, tf.train.NanTensorHook(train_op),
+                 _ProfilerHook, _LoggerHook(), summary_hook]
 
         # Scafford object for finalizing the graph
-        scaffold = tf.train.Scaffold(
-            local_init_op=tf.group(tf.local_variables_initializer(), dataset_iterator.initializer))
+        scaffold = tf.train.Scaffold(local_init_op=tf.group(tf.local_variables_initializer(), dataset_iterator.initializer))
 
         # The MonitoredTrainingSession takes care of a lot of boilerplate code. It also needs to know if this is
         # The master worker
@@ -179,8 +198,7 @@ def main(_):
                                                          config=config,
                                                          scaffold=scaffold,
                                                          checkpoint_dir='data/checkpoints/',
-                                                         save_checkpoint_secs=1200,
-                                                         save_summaries_secs=1000) as mon_sess:
+                                                         save_checkpoint_secs=1200) as mon_sess:
 
             while not mon_sess.should_stop():
 
@@ -208,6 +226,9 @@ def train_step(inputs, global_batch_size):
     # Define input shape
     images = tf.reshape(images, [FLAGS.batch_size, 256, 256, 1])
 
+    # Display the images
+    tf.summary.image('Train IMG', tf.reshape(images[0], shape=[1, 256, 256, 1]), 4)
+
     # Calculate the logits
     logits, l2_loss = define_model(images)
 
@@ -220,8 +241,13 @@ def train_step(inputs, global_batch_size):
     # Add in L2 term
     loss += l2_loss
 
-    # Return the training operation optimizer
-    train_op, opt = calculate_optimizer(loss)
+    # Update the moving average batch norm ops
+    extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+
+    # Retreive the training operation with the applied gradients
+    with tf.control_dependencies(extra_update_ops):
+        # Return the training operation optimizer
+        train_op, opt = calculate_optimizer(loss)
 
     return train_op, opt, loss
 
