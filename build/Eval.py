@@ -105,7 +105,7 @@ def test():
             with tf.Session(config=config) as mon_sess:
 
                 # Retreive the checkpoint
-                ckpt = tf.train.get_checkpoint_state(checkpoint_dir='data/checkpoints/')
+                ckpt = tf.train.get_checkpoint_state(checkpoint_dir='../data/checkpoints/')
 
                 # Initialize iterator
                 mon_sess.run([var_init, dataset_iterator.initializer])
@@ -114,6 +114,9 @@ def test():
 
                     # Restore the model
                     saver.restore(mon_sess, ckpt.model_checkpoint_path)
+
+                    # model_checkpoint_path: "data/checkpoints/model.ckpt-1604"
+                    Epoch = int(ckpt.model_checkpoint_path.split('-')[-1])
 
                 else:
                     print('No checkpoint file found')
@@ -142,7 +145,6 @@ def test():
                 finally:
 
                     # Calculate final MAE and ACC
-                    Epoch = 10
                     datad, _, _ = sdt.combine_predictions(lbl1, logtz, pt, FLAGS.batch_size)
                     sdt.calculate_metrics(logtz, lbl1, 1, step)
                     sdt.retreive_metrics_classification(Epoch, True)
@@ -154,8 +156,8 @@ def test():
                         print(" ---------------- SAVING THIS ONE %s", ckpt.model_checkpoint_path)
 
                         # Define the filenames
-                        checkpoint_file = os.path.join('data/', ('Epoch_%s_AUC_%0.3f' % (Epoch, sdt.AUC)))
-                        csv_file = os.path.join('data/', ('E_%s_AUC_%0.2f.csv' % (Epoch, sdt.AUC)))
+                        checkpoint_file = os.path.join('../data/', ('Epoch_%s_AUC_%0.3f' % (Epoch, sdt.AUC)))
+                        csv_file = os.path.join('../data/', ('E_%s_AUC_%0.2f.csv' % (Epoch, sdt.AUC)))
 
                         # Save the checkpoint
                         saver.save(mon_sess, checkpoint_file)
@@ -172,7 +174,7 @@ def test():
             print('-' * 70)
 
             # Otherwise check folder for changes
-            filecheck = glob.glob(FLAGS.train_dir + FLAGS.RunInfo + '*')
+            filecheck = glob.glob('../data/checkpoints/' + '*.index')
             newfilec = filecheck
 
             # Sleep if no changes
@@ -181,7 +183,7 @@ def test():
                 time.sleep(int(FLAGS.epoch_size * 0.05))
 
                 # Recheck the folder for changes
-                newfilec = glob.glob(FLAGS.train_dir + FLAGS.RunInfo + '*')
+                newfilec = glob.glob('../data/checkpoints/' + '*.index')
 
 
 def generate_inputs(batch_size):
@@ -192,7 +194,7 @@ def generate_inputs(batch_size):
     """
 
     # Retreive local filenames, exclude the testing files
-    all_files = utils.sdl.retreive_filelist('tfrecords', False, path='data/')
+    all_files = utils.sdl.retreive_filelist('tfrecords', False, path='../data/')
     filenames = [x for x in all_files if 'Test' in x]
 
     # Return data as a dictionary

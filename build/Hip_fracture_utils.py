@@ -36,19 +36,25 @@ def load_protobuf(filenames, training=True, batch_size=32):
     # Create a dataset from the protobuf
     dataset = tf.data.TFRecordDataset(filenames)
 
+    # Shuffle
+    if training: dataset = dataset.shuffle(buffer_size=1000)
+
     _records_call = lambda dataset: \
         sdl.load_tfrecords(dataset, [850, 850, 1], tf.float32)
 
     # Parse the record into tensors
-    dataset = dataset.map(_records_call, num_parallel_calls=6)
+    dataset = dataset.map(_records_call, num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
     # Warp the data set
     scope = 'data_augmentation' if training else 'input'
     with tf.name_scope(scope):
-        dataset = dataset.map(DataPreprocessor(training), num_parallel_calls=6)
+        dataset = dataset.map(DataPreprocessor(training), num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
-    # Repeat, shuffle, then batch
-    dataset = dataset.repeat().shuffle(buffer_size=500).batch(batch_size)
+    # Batch, cache, prefetch, then repeat
+    dataset = dataset.batch(batch_size, drop_remainder=True)
+    dataset = dataset.cache()
+    dataset = dataset.prefetch(buffer_size=batch_size)
+    dataset = dataset.repeat()
 
     # Make an initializable iterator
     iterator = dataset.make_initializable_iterator()

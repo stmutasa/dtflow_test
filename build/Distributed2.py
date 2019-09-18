@@ -57,9 +57,6 @@ tf.app.flags.DEFINE_float('learning_rate', 3e-3, """Initial learning rate""")
 tf.app.flags.DEFINE_integer('epoch_size', 2200, """How many images were loaded""")
 tf.app.flags.DEFINE_integer('num_epochs', 450, """Number of epochs to run""")
 
-# Set tensorflow verbosity: 0 = all, 1 = no info, 2 = no info/warning, 3 = nothing
-# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 # This represents the per worker batch size
 batch_size = FLAGS.batch_size
 
@@ -99,7 +96,7 @@ def main(_):
         # Place any following variables on parameter servers in a round robin manner
         # Everything else is placed on the first device of the worker specified.
         # You can check this with log_device_placement below
-        with tf.device(tf.compat.v1.train.replica_device_setter(worker_device="/job:worker/task:%d" % FLAGS.task_index, cluster=cluster)):
+        with tf.device(tf.compat.v1.train.replica_device_setter(worker_device="/job:worker/task:%d/gpu:0" % FLAGS.task_index, cluster=cluster)):
 
             # Run the input custom function and bring back the data iterator object
             dataset_iterator = generate_inputs(batch_size)
@@ -177,7 +174,7 @@ def main(_):
         sync_replicas_hook = opt.make_session_run_hook((FLAGS.task_index == 0), num_tokens=0)
 
         # Make a profiler hook to track memory and gpu usage
-        _ProfilerHook = tf.train.ProfilerHook(save_secs=1500, output_dir='data/checkpoints/',
+        _ProfilerHook = tf.train.ProfilerHook(save_secs=3000, output_dir='data/checkpoints/',
                                               show_memory=True, show_dataflow=True)
 
         # Make a summary hook
@@ -198,7 +195,7 @@ def main(_):
                                                          config=config,
                                                          scaffold=scaffold,
                                                          checkpoint_dir='data/checkpoints/',
-                                                         save_checkpoint_secs=1200) as mon_sess:
+                                                         save_checkpoint_secs=1800) as mon_sess:
 
             while not mon_sess.should_stop():
 
