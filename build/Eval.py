@@ -52,6 +52,8 @@ batch_size = FLAGS.batch_size
 # 5 epochs with k representing number of replicas per the paper by He et. al
 learning_rate = FLAGS.learning_rate
 
+root = '/home/stmutasa/PycharmProjects/dtflow_test/'
+
 
 # Define a custom training class
 def test():
@@ -105,7 +107,7 @@ def test():
             with tf.Session(config=config) as mon_sess:
 
                 # Retreive the checkpoint
-                ckpt = tf.train.get_checkpoint_state(checkpoint_dir='../data/checkpoints/')
+                ckpt = tf.train.get_checkpoint_state(checkpoint_dir=(root + 'data/checkpoints/'))
 
                 # Initialize iterator
                 mon_sess.run([var_init, dataset_iterator.initializer])
@@ -156,8 +158,8 @@ def test():
                         print(" ---------------- SAVING THIS ONE %s", ckpt.model_checkpoint_path)
 
                         # Define the filenames
-                        checkpoint_file = os.path.join('../data/', ('Epoch_%s_AUC_%0.3f' % (Epoch, sdt.AUC)))
-                        csv_file = os.path.join('../data/', ('E_%s_AUC_%0.2f.csv' % (Epoch, sdt.AUC)))
+                        checkpoint_file = os.path.join((root + 'data/'), ('Epoch_%s_AUC_%0.3f' % (Epoch, sdt.AUC)))
+                        csv_file = os.path.join((root + 'data/'), ('E_%s_AUC_%0.2f.csv' % (Epoch, sdt.AUC)))
 
                         # Save the checkpoint
                         saver.save(mon_sess, checkpoint_file)
@@ -174,7 +176,7 @@ def test():
             print('-' * 70)
 
             # Otherwise check folder for changes
-            filecheck = glob.glob('../data/checkpoints/' + '*.index')
+            filecheck = glob.glob((root + 'data/checkpoints/') + '*.index')
             newfilec = filecheck
 
             # Sleep if no changes
@@ -183,7 +185,7 @@ def test():
                 time.sleep(int(FLAGS.epoch_size * 0.05))
 
                 # Recheck the folder for changes
-                newfilec = glob.glob('../data/checkpoints/' + '*.index')
+                newfilec = glob.glob((root + 'data/checkpoints/') + '*.index')
 
 
 def generate_inputs(batch_size):
@@ -194,7 +196,7 @@ def generate_inputs(batch_size):
     """
 
     # Retreive local filenames, exclude the testing files
-    all_files = utils.sdl.retreive_filelist('tfrecords', False, path='../data/')
+    all_files = utils.sdl.retreive_filelist('tfrecords', False, path=(root + 'data/'))
     filenames = [x for x in all_files if 'Test' in x]
 
     # Return data as a dictionary

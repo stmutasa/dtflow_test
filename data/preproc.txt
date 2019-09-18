@@ -1,0 +1,10 @@
+Train:
+Patients loaded: 2951, class counts: [291, 93, 574] ([873, 930, 1148]) saving...
+
+DRRs:
+1533 Images generated, 31 patients, [624, 559, 350]
+
+Train Size: 4484
+
+Test:
+Patients loaded: 105, class counts: [35, 35, 35] saving

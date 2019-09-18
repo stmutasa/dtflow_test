@@ -96,7 +96,7 @@ def main(_):
         # Place any following variables on parameter servers in a round robin manner
         # Everything else is placed on the first device of the worker specified.
         # You can check this with log_device_placement below
-        with tf.device(tf.compat.v1.train.replica_device_setter(worker_device="/job:worker/task:%d/gpu:0" % FLAGS.task_index, cluster=cluster)):
+        with tf.device(tf.compat.v1.train.replica_device_setter(worker_device="/job:worker/task:%d" % FLAGS.task_index, cluster=cluster)):
 
             # Run the input custom function and bring back the data iterator object
             dataset_iterator = generate_inputs(batch_size)
@@ -354,7 +354,4 @@ def calculate_optimizer(loss):
 
 
 if __name__ == "__main__":
-    if tf.io.gfile.exists("/tmp/train_logs"):
-        tf.io.gfile.rmtree("/tmp/train_logs")
-    tf.io.gfile.makedirs("/tmp/train_logs")
     tf.compat.v1.app.run(main=main)
