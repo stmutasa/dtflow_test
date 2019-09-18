@@ -5,18 +5,22 @@ services:
   ps0:
     image: stmutasa/dtflow_test:cumc4
     network_mode: "host"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - ../data:/app/data
     stdin_open: true
     tty: true
     command:
-      ["python3", "Distributed2.py", "--ps_hosts=192.168.0.8:2222", "--worker_hosts=192.168.0.8:2223,192.168.0.12:2224", "--job_name=ps", "--task_index=0"]
+      ["python3", "Distributed2.py", "--ps_hosts=192.168.0.8:2222", "--worker_hosts=192.168.0.8:2223,192.168.0.10:2224", "--job_name=ps", "--task_index=0"]
     #["python3", "Distributed2.py", "--ps_hosts=localhost:2222", "--worker_hosts=localhost:2223,localhost:2224", "--job_name=ps", "--task_index=0"]
 
   # The first worker container
   worker0:
     image: stmutasa/dtflow_test:cumc4
     network_mode: "host"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
     # Map the cwd to the container /dtflow_test folder
     volumes:
       - ../data:/app/data
@@ -28,8 +32,10 @@ services:
   # worker1:
   #   image: stmutasa/dtflow_test:cumc3
   #   network_mode: "host"
+  #   environment:
+  #     - NVIDIA_VISIBLE_DEVICES=all
   #   volumes:
   #     - ../data:/app/data
   #   command:
-  #     ["python3", "Distributed2.py", "--ps_hosts=192.168.0.12:2222", "--worker_hosts=192.168.0.8:2223,192.168.0.12:2224", "--job_name=worker", "--task_index=1"]
+  #     ["python3", "Distributed2.py", "--ps_hosts=192.168.0.8:2222", "--worker_hosts=192.168.0.10:2223,192.168.0.8:2224", "--job_name=worker", "--task_index=1"]
   #     #["python3", "Distributed2.py", "--ps_hosts=localhost:2222", "--worker_hosts=localhost:2223,localhost:2224", "--job_name=worker", "--task_index=1"]

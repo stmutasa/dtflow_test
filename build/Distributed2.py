@@ -75,10 +75,15 @@ def main(_):
     # To know which other systems it has to wait on
     cluster = tf.train.ClusterSpec({"ps": ps_hosts, "worker": worker_hosts})
 
+    # Define the configuration proto for the session.
+    config = tf.compat.v1.ConfigProto(log_device_placement=False, allow_soft_placement=True)
+    config.gpu_options.allow_growth = True
+
     # Create and start this specific server
     server = tf.distribute.Server(cluster,
                                   job_name=FLAGS.job_name,
-                                  task_index=FLAGS.task_index)
+                                  task_index=FLAGS.task_index,
+                                  config=config)
 
     # Calculate the global batch size
     global_batch_size = batch_size * len(worker_hosts)
@@ -164,10 +169,6 @@ def main(_):
                     print(format_str % (datetime.datetime.now(), self._step, (loss_value * 1e6),
                                         examples_per_sec, sec_per_batch))
 
-        # Define the configuration proto for the session.
-        config = tf.compat.v1.ConfigProto(log_device_placement=False, allow_soft_placement=True)
-        config.gpu_options.allow_growth = True
-
         # Make a sync replicas hook that handles initialization and queues. This is key to making the process
         # synchronized (not needed if asynchronous). The 1st parameter needs to know if this is the master worker
         # Num tokens=0 seems to be needed to prevent the master worker from hijacking all the tokens initially
@@ -192,7 +193,6 @@ def main(_):
         with tf.compat.v1.train.MonitoredTrainingSession(master=server.target,
                                                          is_chief=(FLAGS.task_index == 0),
                                                          hooks=hooks,
-                                                         config=config,
                                                          scaffold=scaffold,
                                                          checkpoint_dir='data/checkpoints/',
                                                          save_checkpoint_secs=1800) as mon_sess:
