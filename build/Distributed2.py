@@ -175,11 +175,11 @@ def main(_):
         sync_replicas_hook = opt.make_session_run_hook((FLAGS.task_index == 0), num_tokens=0)
 
         # Make a profiler hook to track memory and gpu usage
-        _ProfilerHook = tf.train.ProfilerHook(save_secs=3000, output_dir='data/checkpoints/',
+        _ProfilerHook = tf.train.ProfilerHook(save_steps=max_steps // 8, output_dir='data/checkpoints/',
                                               show_memory=True, show_dataflow=True)
 
         # Make a summary hook
-        summary_hook = tf.train.SummarySaverHook(save_secs=1000, output_dir='data/checkpoints/', summary_op=all_summaries)
+        summary_hook = tf.train.SummarySaverHook(save_steps=max_steps // 10, output_dir='data/checkpoints/', summary_op=all_summaries)
 
         # Group our hooks for the monitored train sessions.
         hooks = [tf.train.StopAtStepHook(last_step=max_steps), sync_replicas_hook, tf.train.NanTensorHook(train_op),
@@ -195,7 +195,7 @@ def main(_):
                                                          hooks=hooks,
                                                          scaffold=scaffold,
                                                          checkpoint_dir='data/checkpoints/',
-                                                         save_checkpoint_secs=1800) as mon_sess:
+                                                         save_checkpoint_steps=max_steps // 6) as mon_sess:
 
             while not mon_sess.should_stop():
 
