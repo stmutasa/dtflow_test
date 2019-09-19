@@ -33,16 +33,16 @@ import Hip_fracture_utils as utils
 FLAGS = tf.app.flags.FLAGS
 
 # Define some of the command line arguments
-tf.app.flags.DEFINE_integer('task_index', 0,
+tf.app.flags.DEFINE_integer('task_index', 1,
                             'Index of task within the job')
 
-tf.app.flags.DEFINE_string('ps_hosts', 'localhost:3222',
+tf.app.flags.DEFINE_string('ps_hosts', '192.168.0.10:2222',
                            'Comma separated list of hostname:port pairs')
 
 tf.app.flags.DEFINE_string('job_name', 'worker',
                            'Either ps or worker')
 
-tf.app.flags.DEFINE_string('worker_hosts', 'localhost:3224',
+tf.app.flags.DEFINE_string('worker_hosts', '192.168.0.8:2223,192.168.0.10:2224',
                            'Comma separated list of hostname:port pairs')
 
 """
@@ -54,8 +54,8 @@ tf.app.flags.DEFINE_integer('num_classes', 2, """ Number of classes""")
 tf.app.flags.DEFINE_float('dropout_factor', 0.5, """ Keep probability""")
 tf.app.flags.DEFINE_float('l2_gamma', 1e-4, """ The gamma value for regularization loss""")
 tf.app.flags.DEFINE_float('learning_rate', 3e-3, """Initial learning rate""")
-tf.app.flags.DEFINE_integer('epoch_size', 2200, """How many images were loaded""")
-tf.app.flags.DEFINE_integer('num_epochs', 450, """Number of epochs to run""")
+tf.app.flags.DEFINE_integer('epoch_size', 1000, """How many images were loaded""")
+tf.app.flags.DEFINE_integer('num_epochs', 200, """Number of epochs to run""")
 
 # This represents the per worker batch size
 batch_size = FLAGS.batch_size
@@ -75,7 +75,8 @@ def main(_):
     # To know which other systems it has to wait on
     cluster = tf.train.ClusterSpec({"ps": ps_hosts, "worker": worker_hosts})
 
-    # Define the configuration proto for the session.
+    # Define the configuration proto for the session. Add this to the tf.distribute server definition,
+    # NOT the session definition otherwise it won't be applied across the cluster
     config = tf.compat.v1.ConfigProto(log_device_placement=False, allow_soft_placement=True)
     config.gpu_options.allow_growth = True
 
@@ -124,6 +125,7 @@ def main(_):
         max_steps = int((FLAGS.epoch_size / FLAGS.batch_size) * FLAGS.num_epochs)
         checkpoint_steps = int((FLAGS.epoch_size / FLAGS.batch_size) * FLAGS.num_epochs) // 100
 
+        # Overwrite the session run hook functions called after each iteration
         class _LoggerHook(tf.train.SessionRunHook):
 
             def begin(self):
@@ -252,6 +254,7 @@ def train_step(inputs, global_batch_size):
 def generate_inputs(local_batch_size):
     """
     Function to generate inputs and return a tf.data iterator
+    Any input function can be placed here
     :param local_batch_size: total batch size for this worker
     :return:
     """
@@ -267,8 +270,9 @@ def generate_inputs(local_batch_size):
 
 
 def define_model(inputs):
+
     """
-    Defines the model
+    Defines the model. Any custom model can be placed here
     :param inputs: tf.data inputs
     :return: The calculated logits
     """
@@ -280,6 +284,7 @@ def define_model(inputs):
 def calculate_loss(logits, labels):
     """
     Calculates the loss
+    Any custom loss functions can be placed here
     :param logits: Logits, output from the model
     :param labels: The labels from tf.data
     :return: The total loss
