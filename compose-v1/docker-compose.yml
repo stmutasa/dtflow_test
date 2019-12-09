@@ -10,17 +10,17 @@ services:
     stdin_open: true
     tty: true
     command:
-      ["python3", "/dtflow_test/Distributed2.py", "--ps_hosts=169.234.29.77:2222", "--worker_hosts=128.195.151.158:2223,169.234.29.77:2224", "--job_name=ps", "--task_index=0"]
+      ["python3", "/dtflow_test/Distributed2.py", "--ps_hosts=156.111.141.108:2222", "--worker_hosts=10.177.152.104:2223,156.111.141.108:2224", "--job_name=ps", "--task_index=0"]
 
-  # The first worker container
-  worker0:
-    image: stmutasa/dtflow_test:v1
-    network_mode: "host"
-    # Map the cwd to the container /dtflow_test folder
-    volumes:
-        - ..:/dtflow_test
-    command:
-      ["python3", "/dtflow_test/Distributed2.py", "--ps_hosts=169.234.29.77:2222", "--worker_hosts=128.195.151.158:2223,169.234.29.77:2224", "--job_name=worker", "--task_index=0"]
+#  # The first worker container
+#  worker0:
+#    image: stmutasa/dtflow_test:v1
+#    network_mode: "host"
+#    # Map the cwd to the container /dtflow_test folder
+#    volumes:
+#        - ..:/dtflow_test
+#    command:
+#      ["python3", "/dtflow_test/Distributed2.py", "--ps_hosts=156.111.141.108:2222", "--worker_hosts=10.177.152.104:2223,156.111.141.108:2224", "--job_name=worker", "--task_index=0"]
 
   # The second worker container
   worker1:
@@ -29,4 +29,4 @@ services:
     volumes:
         - ..:/dtflow_test
     command:
-      ["python3", "/dtflow_test/Distributed2.py", "--ps_hosts=169.234.29.77:2222", "--worker_hosts=128.195.151.158:2223,169.234.29.77:2224", "--job_name=worker", "--task_index=1"]
+      ["python3", "/dtflow_test/Distributed2.py", "--ps_hosts=156.111.141.108:2222", "--worker_hosts=10.177.152.104:2223,156.111.141.108:2224", "--job_name=worker", "--task_index=1"]
