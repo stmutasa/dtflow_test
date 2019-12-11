@@ -37,7 +37,9 @@ def load_protobuf(filenames, training=True, batch_size=32):
     dataset = tf.data.TFRecordDataset(filenames)
 
     # Shuffle
-    if training: dataset = dataset.shuffle(buffer_size=1000)
+    if training:
+        dataset = dataset.shuffle(buffer_size=1000)
+        dataset = dataset.repeat()
 
     _records_call = lambda dataset: \
         sdl.load_tfrecords(dataset, [850, 850, 1], tf.float32)
@@ -52,9 +54,7 @@ def load_protobuf(filenames, training=True, batch_size=32):
 
     # Batch, cache, prefetch, then repeat
     dataset = dataset.batch(batch_size, drop_remainder=True)
-    dataset = dataset.cache()
     dataset = dataset.prefetch(buffer_size=batch_size)
-    dataset = dataset.repeat()
 
     # Make an initializable iterator
     iterator = dataset.make_initializable_iterator()
@@ -86,7 +86,7 @@ class DataPreprocessor(object):
             record['data'] = tf.image.resize_images(record['data'], [256, 256])
 
             # Random gaussian noise
-            T_noise = tf.random_uniform([1], 0, 0.1)
+            T_noise = tf.random_uniform([], 0, 0.1)
             noise = tf.random_uniform(shape=[256, 256, 1], minval=-T_noise, maxval=T_noise)
             record['data'] = tf.add(record['data'], tf.cast(noise, tf.float32))
 
@@ -162,6 +162,7 @@ def total_loss(logits, labels):
     :return: the loss value
     """
 
+    # Adjust size
     logits, labels = tf.squeeze(logits), tf.squeeze(labels)
 
     # Change labels to one hot
