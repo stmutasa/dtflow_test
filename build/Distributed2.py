@@ -27,29 +27,29 @@ TODO:
 # This is the baseline process that every container will have a copy of
 import tensorflow as tf
 import time, datetime
-import Hip_fracture_utils as utils
+import build.Utils as utils
 
 # Define command line arguments to define how this process will run. TF.app.flags is similar to sys.argv
 FLAGS = tf.app.flags.FLAGS
 
-# Define some of the command line arguments
-tf.app.flags.DEFINE_integer('task_index', 1,
+# Define some of the default command line arguments
+tf.app.flags.DEFINE_integer('task_index', 0,
                             'Index of task within the job')
 
-tf.app.flags.DEFINE_string('ps_hosts', '192.168.0.10:2222',
+tf.app.flags.DEFINE_string('ps_hosts', 'localhost:2222',
                            'Comma separated list of hostname:port pairs')
 
 tf.app.flags.DEFINE_string('job_name', 'worker',
                            'Either ps or worker')
 
-tf.app.flags.DEFINE_string('worker_hosts', '192.168.0.8:2223,192.168.0.10:2224',
+tf.app.flags.DEFINE_string('worker_hosts', 'localhost:2223',
                            'Comma separated list of hostname:port pairs')
 
 """
 Network flags
 """
 
-tf.app.flags.DEFINE_integer('batch_size', 256, """Number of images to process in a batch.""")
+tf.app.flags.DEFINE_integer('batch_size', 16, """Number of images to process in a batch.""")
 tf.app.flags.DEFINE_integer('num_classes', 2, """ Number of classes""")
 tf.app.flags.DEFINE_float('dropout_factor', 0.5, """ Keep probability""")
 tf.app.flags.DEFINE_float('l2_gamma', 1e-4, """ The gamma value for regularization loss""")
@@ -123,7 +123,7 @@ def main(_):
 
         # Set the intervals
         max_steps = int((FLAGS.epoch_size / FLAGS.batch_size) * FLAGS.num_epochs)
-        checkpoint_steps = int((FLAGS.epoch_size / FLAGS.batch_size) * FLAGS.num_epochs) // 100
+        checkpoint_steps = int((FLAGS.epoch_size / FLAGS.batch_size) * FLAGS.num_epochs) // 10
 
         # Overwrite the session run hook functions called after each iteration
         class _LoggerHook(tf.train.SessionRunHook):
@@ -144,7 +144,7 @@ def main(_):
             def after_create_session(self, session, coord):
 
                 # Called after the session is made and graph is finalized
-                print('\n******Worker %s: Session started!! Starting loops\n' % FLAGS.task_index)
+                print('\n******Worker %s: Session Successfully started!! Starting loops\n' % FLAGS.task_index)
 
             def before_run(self, run_context):
 
@@ -219,8 +219,9 @@ def train_step(inputs, global_batch_size):
     :return: The reduced loss
     """
 
-    # Get the inputs.
-    images, labels = inputs['data'], inputs['label2']
+    # Get the inputs TODO: Change for dummy data.
+    #images, labels = inputs['data'], inputs['label2']
+    images, labels = inputs[0], inputs[1]
 
     # Define input shape
     images = tf.reshape(images, [FLAGS.batch_size, 256, 256, 1])
@@ -265,8 +266,9 @@ def generate_inputs(local_batch_size):
 
     print('*' * 10, 'Files for worker %s: %s' % (FLAGS.task_index, filenames))
 
-    # Return data as a dictionary
-    return utils.load_protobuf(filenames, training=True, batch_size=local_batch_size)
+    # Return data as a dictionary: TODO: Change for dummy data
+    #return utils.load_protobuf(filenames, training=True, batch_size=local_batch_size)
+    return utils.dummy_inputs(local_batch_size)
 
 
 def define_model(inputs):
