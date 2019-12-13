@@ -3,7 +3,7 @@ version: '3.7'
 
 services:
   ps0:
-    image: stmutasa/dtflow_test:dummy
+    image: stmutasa/dtflow_test:dummy_cpu
     network_mode: "host"
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -30,7 +30,7 @@ services:
 
   # The second worker container
   worker1:
-    image: stmutasa/dtflow_test:dummy
+    image: stmutasa/dtflow_test:dummy_cpu
     network_mode: "host"
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
