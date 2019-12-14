@@ -14,6 +14,7 @@ services:
   #   command:
   #     #["python3", "Distributed2.py", "--ps_hosts=localhost:2222", "--worker_hosts=localhost:2223,localhost:2224", "--job_name=ps", "--task_index=0"]
   #     ["python3", "Distributed2.py", "--ps_hosts=192.168.0.10:2222", "--worker_hosts=192.168.0.5:2223,192.168.0.10:2224", "--job_name=ps", "--task_index=0"]
+  #     ["python3", "Distributed2.py", "--ps_hosts=68.174.175.23:2222", "--worker_hosts=72.229.138.175:2223,68.174.175.23:2224", "--job_name=ps", "--task_index=0"]
 
   # The first worker container
   worker0:
@@ -26,7 +27,8 @@ services:
       - ../data:/app/data
     command:
       #["python3", "Distributed2.py", "--ps_hosts=localhost:2222", "--worker_hosts=localhost:2223,localhost:2224", "--job_name=worker", "--task_index=0"]
-      ["python3", "Distributed2.py", "--ps_hosts=192.168.0.10:2222", "--worker_hosts=192.168.0.5:2223,192.168.0.10:2224", "--job_name=worker", "--task_index=0"]
+      #["python3", "Distributed2.py", "--ps_hosts=192.168.0.10:2222", "--worker_hosts=192.168.0.5:2223,192.168.0.10:2224", "--job_name=worker", "--task_index=0"]
+      ["python3", "Distributed2.py", "--ps_hosts=68.174.175.23:2222", "--worker_hosts=72.229.138.175:2223,68.174.175.23:2224", "--job_name=worker", "--task_index=0"]
 
   # # The second worker container
   # worker1:
@@ -39,3 +41,4 @@ services:
   #   command:
   #     #["python3", "Distributed2.py", "--ps_hosts=localhost:2222", "--worker_hosts=localhost:2223,localhost:2224", "--job_name=worker", "--task_index=1"]
   #     ["python3", "Distributed2.py", "--ps_hosts=192.168.0.10:2222", "--worker_hosts=192.168.0.5:2223,192.168.0.10:2224", "--job_name=worker", "--task_index=1"]
+  #     ["python3", "Distributed2.py", "--ps_hosts=68.174.175.23:2222", "--worker_hosts=72.229.138.175:2223,68.174.175.23:2224", "--job_name=worker", "--task_index=1"]
