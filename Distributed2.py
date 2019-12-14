@@ -196,7 +196,6 @@ def main(_):
                                                          is_chief=(FLAGS.task_index == 0),
                                                          hooks=hooks,
                                                          scaffold=scaffold,
-                                                         checkpoint_dir='data/checkpoints/',
                                                          save_checkpoint_steps=max_steps // 6) as mon_sess:
 
             while not mon_sess.should_stop():

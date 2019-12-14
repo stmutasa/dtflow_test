@@ -12,23 +12,19 @@ import numpy as np
 
 
 class SODMatrix(object):
-
     #  SOD Matrix. A class with all the network function wrappers
-
 
     # Define training or testing phase
     training_phase = None
 
     def __init__(self, summary=True, phase_train=True):
 
-        self.summary=summary
-        self.phase_train=phase_train
+        self.summary = summary
+        self.phase_train = phase_train
 
         pass
 
-
     # *************** Convolution wrappers ***************
-
 
     def convolution(self, scope, X, F, K, S=2, padding='SAME', phase_train=None, BN=True, relu=True, downsample=False, bias=True, dropout=None):
         """
@@ -80,7 +76,7 @@ class SODMatrix(object):
             if BN: conv = self.batch_normalization(conv, phase_train, scope)
 
             # Channel wise dropout
-            if dropout and phase_train==True: conv = tf.nn.dropout(conv, dropout, noise_shape=[B, 1, 1, C])
+            if dropout and phase_train == True: conv = tf.nn.dropout(conv, dropout, noise_shape=[B, 1, 1, C])
 
             # If requested, use the avg + max pool downsample operation
             if downsample: conv = self.incepted_downsample(conv)
@@ -90,8 +86,7 @@ class SODMatrix(object):
 
             return conv
 
-
-    def convolution_3d(self, scope, X, F, K, S=2, padding='SAME', phase_train=None, BN=True, relu=True, downsample=False, dropout=None, bias=True):
+    def convolution_3d(self, scope, X, F, K, S=2, padding='SAME', phase_train=None, BN=True, relu=True, downsample=False, dropout=None):
         """
         This is a wrapper for 3-dimensional convolutions
         :param scope:
@@ -105,7 +100,6 @@ class SODMatrix(object):
         :param relu: Whether to perform relu
         :param downsample: Whether to perform a max+avg pool downsample
         :param dropout: whether to apply channel_wise dropout
-        :param bias: Whether to apply bias
         :return:
         """
 
@@ -120,23 +114,28 @@ class SODMatrix(object):
             self.training_phase = phase_train
 
             # Define the Kernel. Can use he et al
-            try: kernel = tf.get_variable('Weights', shape=[F[0], F[1], F[2], C, K],
-                                     initializer=tf.contrib.layers.variance_scaling_initializer())
-            except: kernel = tf.get_variable('Weights', shape=[F, F, F, C, K],
-                                     initializer=tf.contrib.layers.variance_scaling_initializer())
+            try:
+                kernel = tf.get_variable('Weights', shape=[F[0], F[1], F[2], C, K],
+                                         initializer=tf.contrib.layers.variance_scaling_initializer())
+            except:
+                kernel = tf.get_variable('Weights', shape=[F, F, F, C, K],
+                                         initializer=tf.contrib.layers.variance_scaling_initializer())
+
+            # Define the biases
+            bias = tf.get_variable('Bias', shape=[K], initializer=tf.constant_initializer(0.0))
 
             # Add to the weights collection
             tf.add_to_collection('weights', kernel)
+            tf.add_to_collection('biases', bias)
 
             # Perform the actual convolution
-            try: conv = tf.nn.conv3d(X, kernel, [1, S[0], S[1], S[2], 1], padding=padding)
-            except: conv = tf.nn.conv3d(X, kernel, [1, S, S, S, 1], padding=padding)
+            try:
+                conv = tf.nn.conv3d(X, kernel, [1, S[0], S[1], S[2], 1], padding=padding)
+            except:
+                conv = tf.nn.conv3d(X, kernel, [1, S, S, S, 1], padding=padding)
 
             # Add the bias
-            if bias:
-                bias = tf.get_variable('Bias', shape=[K], initializer=tf.constant_initializer(0.0))
-                tf.add_to_collection('biases', bias)
-                conv = tf.nn.bias_add(conv, bias)
+            conv = tf.nn.bias_add(conv, bias)
 
             # Relu activation
             if relu: conv = tf.nn.relu(conv, name=scope.name)
@@ -155,55 +154,53 @@ class SODMatrix(object):
 
             return conv
 
-
     def depthwise_convolution(self, scope, X, F, K, S=2, padding='SAME', phase_train=None, BN=True, relu=True):
-            """
-            This is a wrapper for depthwise convolutions
-            :param scope:
-            :param X: Output of the prior layer
-            :param F: Convolutional filter size
-            :param K: Number of feature maps
-            :param S: Stride
-            :param padding: 'SAME' or 'VALID'
-            :param phase_train: For batch norm implementation
-            :param BN: whether to perform batch normalization
-            :return: conv: the result of everything
-            """
+        """
+        This is a wrapper for depthwise convolutions
+        :param scope:
+        :param X: Output of the prior layer
+        :param F: Convolutional filter size
+        :param K: Number of feature maps
+        :param S: Stride
+        :param padding: 'SAME' or 'VALID'
+        :param phase_train: For batch norm implementation
+        :param BN: whether to perform batch normalization
+        :return: conv: the result of everything
+        """
 
-            # Set channel size based on input depth
-            C = X.get_shape().as_list()[-1]
+        # Set channel size based on input depth
+        C = X.get_shape().as_list()[-1]
 
-            # Set the scope
-            with tf.variable_scope(scope) as scope:
+        # Set the scope
+        with tf.variable_scope(scope) as scope:
 
-                # Define the Kernel. Can use Xavier init: contrib.layers.xavier_initializer())
-                kernel = tf.get_variable('Weights', shape=[F, F, C, K],
-                                         initializer=tf.contrib.layers.variance_scaling_initializer())
+            # Define the Kernel. Can use Xavier init: contrib.layers.xavier_initializer())
+            kernel = tf.get_variable('Weights', shape=[F, F, C, K],
+                                     initializer=tf.contrib.layers.variance_scaling_initializer())
 
-                # Define the biases
-                bias = tf.get_variable('Bias', shape=[K], initializer=tf.constant_initializer(0.0))
+            # Define the biases
+            bias = tf.get_variable('Bias', shape=[K], initializer=tf.constant_initializer(0.0))
 
-                # Add to the weights collection
-                tf.add_to_collection('weights', kernel)
-                tf.add_to_collection('biases', bias)
+            # Add to the weights collection
+            tf.add_to_collection('weights', kernel)
+            tf.add_to_collection('biases', bias)
 
-                # Perform the actual convolution
-                conv = tf.nn.depthwise_conv2d(X, kernel, [1, S, S, 1], padding=padding)
+            # Perform the actual convolution
+            conv = tf.nn.depthwise_conv2d(X, kernel, [1, S, S, 1], padding=padding)
 
-                # Apply the batch normalization. Updates weights during training phase only
-                if BN: conv = self.batch_normalization(conv, phase_train, 'DWC_Norm')
+            # Apply the batch normalization. Updates weights during training phase only
+            if BN: conv = self.batch_normalization(conv, phase_train, 'DWC_Norm')
 
-                # Add the bias
-                conv = tf.nn.bias_add(conv, bias)
+            # Add the bias
+            conv = tf.nn.bias_add(conv, bias)
 
-                # Relu activation
-                if relu: conv = tf.nn.relu(conv, name=scope.name)
+            # Relu activation
+            if relu: conv = tf.nn.relu(conv, name=scope.name)
 
-                # Create a histogram/scalar summary of the conv1 layer
-                if self.summary: self._activation_summary(conv)
+            # Create a histogram/scalar summary of the conv1 layer
+            if self.summary: self._activation_summary(conv)
 
-                return conv
-
+            return conv
 
     def deconvolution(self, scope, X, F, K, S, padding='SAME', phase_train=None, concat=True,
                       concat_var=None, out_shape=None, BN=True, relu=True):
@@ -256,8 +253,10 @@ class SODMatrix(object):
             if concat_var is not None:
 
                 # Concatenate or add along the depth axis
-                if concat: conv = tf.concat([concat_var, conv], axis=-1)
-                else: conv = tf.add(conv, concat_var)
+                if concat:
+                    conv = tf.concat([concat_var, conv], axis=-1)
+                else:
+                    conv = tf.add(conv, concat_var)
 
             # Add in bias
             conv = tf.nn.bias_add(conv, bias)
@@ -270,9 +269,8 @@ class SODMatrix(object):
 
             return conv
 
-
     def deconvolution_3d(self, scope, X, F, K, S, padding='SAME', phase_train=None, concat=True,
-                      concat_var=None, out_shape=None, BN=True, relu=True):
+                         concat_var=None, out_shape=None, BN=True, relu=True):
         """
         This is a wrapper for 3D De-convolutions aka fractionally strided convolutions aka transposed convolutions
         aka upconvolutions aka backwards convolutions
@@ -321,8 +319,10 @@ class SODMatrix(object):
             if BN: conv = self.batch_normalization(conv, phase_train, scope)
 
             # Concatenate or add along the depth axis
-            if concat: conv = tf.concat([concat_var, conv], axis=-1)
-            else: conv = tf.add(conv, concat_var)
+            if concat:
+                conv = tf.concat([concat_var, conv], axis=-1)
+            else:
+                conv = tf.add(conv, concat_var)
 
             # Add in bias
             conv = tf.nn.bias_add(conv, bias)
@@ -334,7 +334,6 @@ class SODMatrix(object):
             if self.summary: self._activation_summary(conv)
 
             return conv
-
 
     def inception_layer(self, scope, X, K, S=1, padding='SAME', phase_train=None, BN=True, relu=True, dropout=None):
         """
@@ -352,21 +351,23 @@ class SODMatrix(object):
 
         # Set output feature maps
         orig_K = K
-        if S > 1: K = int(K/4)
-        else: K = int(3*K/8)
+        if S > 1:
+            K = int(K / 4)
+        else:
+            K = int(3 * K / 8)
 
         # Set BN and relu
-        if S ==1:
+        if S == 1:
             oBN = BN
-            orelu=relu
+            orelu = relu
             BN = True
-            relu=True
+            relu = True
 
         # Implement an inception layer here ----------------
         with tf.variable_scope(scope) as scope:
 
             # First branch, 1x1xK convolution
-            inception1 = self.convolution('Inception1', X, 1, K, S, phase_train=phase_train,  BN=BN, relu=relu)
+            inception1 = self.convolution('Inception1', X, 1, K, S, phase_train=phase_train, BN=BN, relu=relu)
 
             # Second branch, 1x1 bottleneck then 3x3 convolution
             inception2 = self.convolution('Inception2a', X, 1, K, S, phase_train=phase_train)
@@ -392,12 +393,10 @@ class SODMatrix(object):
             if dropout and phase_train == True: inception = tf.nn.dropout(inception, dropout, noise_shape=[B, 1, 1, C])
 
             # Final projection
-            if S==1: inception = self.convolution('Inception_Fin', inception, 1, orig_K, 1, phase_train=phase_train,
-                                                  BN=oBN, relu=orelu)
-
+            if S == 1: inception = self.convolution('Inception_Fin', inception, 1, orig_K, 1, phase_train=phase_train,
+                                                    BN=oBN, relu=orelu)
 
             return inception
-
 
     def inception_layer_3d(self, scope, X, K, Fz=1, S=1, padding='SAME', phase_train=None, BN=True, relu=True, dropout=None):
         """
@@ -416,13 +415,10 @@ class SODMatrix(object):
 
         # Set output feature maps
         orig_K = K
-
-        try:
-            if S > 1: K = int(K / 4)
-            else: K = int(3 * K / 8)
-        except:
-            if any(x > 1 for x in S): K = int(K / 4)
-            else: K = int(3 * K / 8)
+        if S > 1:
+            K = int(K / 4)
+        else:
+            K = int(3 * K / 8)
 
         # Set BN and relu
         if S == 1:
@@ -436,13 +432,13 @@ class SODMatrix(object):
 
             # First branch, 1x1x64 convolution
             inception1 = self.convolution_3d('Inception1', X, [Fz, 1, 1], K, S,
-                                          phase_train=phase_train, BN=BN, relu=relu)
+                                             phase_train=phase_train, BN=BN, relu=relu)
 
             # Second branch, 1x1 convolution then 3x3 convolution
             inception2 = self.convolution_3d('Inception2a', X, [Fz, 1, 1], K, S,
-                                           phase_train=phase_train)
+                                             phase_train=phase_train)
             inception2 = self.convolution_3d('Inception2', inception2, [1, 3, 3], K, 1,
-                                          phase_train=phase_train, BN=BN, relu=relu)
+                                             phase_train=phase_train, BN=BN, relu=relu)
 
             # Third branch, 1x1 convolution then 5x5 convolution:
             inception3 = self.convolution_3d('Inception3a', X, [Fz, 1, 1], K, S, phase_train=phase_train)
@@ -468,7 +464,6 @@ class SODMatrix(object):
                                                        phase_train=phase_train, BN=oBN, relu=orelu)
 
             return inception
-
 
     def residual_layer_stanford(self, scope, X, F, K, S=2, K_prob=None, padding='SAME', phase_train=None, DSC=False, BN=False, relu=False, dropout=None):
         """
@@ -507,12 +502,16 @@ class SODMatrix(object):
             if K_prob: conv2 = tf.nn.dropout(conv2, K_prob)
 
             # Final downsampled conv without BN or RELU
-            if DSC: conv = self.convolution('ConvFinal', conv2, F, K, 1, padding, phase_train, False, False, True)
-            else: conv = self.convolution('ConvFinal', conv2, F, K*S, S, padding, phase_train, False, False)
+            if DSC:
+                conv = self.convolution('ConvFinal', conv2, F, K, 1, padding, phase_train, False, False, True)
+            else:
+                conv = self.convolution('ConvFinal', conv2, F, K * S, S, padding, phase_train, False, False)
 
             # Downsample the residual input if we did the conv layer. pool or strided
-            if DSC: X = self.incepted_downsample(X)
-            elif S>1: X = self.convolution('ResDown', X, 1, K*S, S, phase_train=phase_train, BN=False, relu=False)
+            if DSC:
+                X = self.incepted_downsample(X)
+            elif S > 1:
+                X = self.convolution('ResDown', X, 1, K * S, S, phase_train=phase_train, BN=False, relu=False)
 
             # Apply the batch normalization. Updates weights during training phase only
             if BN: conv = self.batch_normalization(conv, phase_train, scope)
@@ -531,7 +530,6 @@ class SODMatrix(object):
             if dropout and phase_train == True: residual = tf.nn.dropout(residual, dropout, noise_shape=[B, 1, 1, C])
 
             return residual
-
 
     def residual_layer(self, scope, residual, F, K, S=2, padding='SAME', phase_train=None, dropout=None):
 
@@ -558,7 +556,7 @@ class SODMatrix(object):
             conv = self.convolution('Conv2', conv, F, K, 1, padding, phase_train, True, False)
 
             # Downsample the residual input using strided 1x1 conv
-            if S>1: residual = self.convolution('Res_down', residual, 1, K, S, padding, phase_train, True, False)
+            if S > 1: residual = self.convolution('Res_down', residual, 1, K, S, padding, phase_train, True, False)
 
             # Add the Residual
             conv = tf.add(conv, residual)
@@ -572,7 +570,6 @@ class SODMatrix(object):
             if dropout and phase_train == True: conv = tf.nn.dropout(conv, dropout, noise_shape=[B, 1, 1, C])
 
             return conv
-
 
     def residual_bottleneck_layer(self, scope, residual, F, K, S=2, padding='SAME', phase_train=None, dropout=None):
 
@@ -593,10 +590,10 @@ class SODMatrix(object):
         with tf.variable_scope(scope) as scope:
 
             # First Convolution with BN and ReLU
-            conv = self.convolution('Conv1', residual, 1, int(K/4), S, padding, phase_train, True, True)
+            conv = self.convolution('Conv1', residual, 1, int(K / 4), S, padding, phase_train, True, True)
 
             # Second convolution with BN and ReLU
-            conv = self.convolution('Conv2', conv, F, int(K/4), 1, padding, phase_train, True, True)
+            conv = self.convolution('Conv2', conv, F, int(K / 4), 1, padding, phase_train, True, True)
 
             # Third layer without ReLU
             conv = self.convolution('Conv3', conv, 1, K, 1, padding, phase_train, True, False)
@@ -616,7 +613,6 @@ class SODMatrix(object):
             if dropout and phase_train == True: conv = tf.nn.dropout(conv, dropout, noise_shape=[B, 1, 1, C])
 
             return conv
-
 
     def wide_residual_layer(self, scope, residual, K, S=2, padding='SAME', phase_train=None, dropout=None):
 
@@ -657,9 +653,8 @@ class SODMatrix(object):
 
             return conv
 
-
     def residual_layer_stanford_3d(self, scope, X, F, K, S=2, K_prob=None, padding='SAME',
-                       phase_train=None, DSC=False, BN=False, relu=False, dropout=None):
+                                   phase_train=None, DSC=False, BN=False, relu=False, dropout=None):
         """
         This is a wrapper for implementing a stanford style residual layer in 3 dimensions
         :param scope:
@@ -696,12 +691,16 @@ class SODMatrix(object):
             if K_prob: conv2 = tf.nn.dropout(conv2, K_prob)
 
             # Final downsampled conv without BN or RELU
-            if DSC: conv = self.convolution_3d('ConvFinal', conv2, F, K, 1, padding, phase_train, False, False, True)
-            else: conv = self.convolution_3d('ConvFinal', conv2, F, K*S, S, padding, phase_train, False, False)
+            if DSC:
+                conv = self.convolution_3d('ConvFinal', conv2, F, K, 1, padding, phase_train, False, False, True)
+            else:
+                conv = self.convolution_3d('ConvFinal', conv2, F, K * S, S, padding, phase_train, False, False)
 
             # Downsample the residual input if we did the conv layer. pool or strided
-            if DSC: X = self.incepted_downsample_3d(X)
-            elif S>1: X = self.convolution_3d('ResDown', X, 1, K*S, S, phase_train=phase_train, BN=False, relu=False)
+            if DSC:
+                X = self.incepted_downsample_3d(X)
+            elif S > 1:
+                X = self.convolution_3d('ResDown', X, 1, K * S, S, phase_train=phase_train, BN=False, relu=False)
 
             # Apply the batch normalization. Updates weights during training phase only
             if BN: conv = self.batch_normalization(conv, phase_train, 'BNRes')
@@ -720,7 +719,6 @@ class SODMatrix(object):
             if dropout and phase_train == True: residual = tf.nn.dropout(residual, dropout, noise_shape=[B, 1, 1, 1, C])
 
             return residual
-
 
     def residual_layer_3d(self, scope, residual, F, K, S=2, padding='SAME', phase_train=None, dropout=None):
 
@@ -741,21 +739,13 @@ class SODMatrix(object):
         with tf.variable_scope(scope) as scope:
 
             # First Convolution with BN and ReLU
-            conv = self.convolution_3d('Conv1', residual, F, K, S, 'SAME', phase_train, True, True)
+            conv = self.convolution_3d('Conv1', residual, F, K, S, padding, phase_train, True, True)
 
             # Second convolution without ReLU
             conv = self.convolution_3d('Conv2', conv, F, K, 1, padding, phase_train, True, False)
 
-            # Account for non valid padding for the residual
-            if padding=='VALID':
-                residual = self.convolution_3d('Res_down', residual, F, K, 1, padding, phase_train, False, False)
-
             # Downsample the residual input using strided 1x1 conv
-            try:
-                if S>1: residual = self.convolution_3d('Res_down', residual, 1, K, S, padding, phase_train, False, False)
-            except:
-                if any(x > 1 for x in S):
-                    residual = self.convolution_3d('Res_down', residual, 1, K, S, padding, phase_train, False, False)
+            if S > 1: residual = self.convolution_3d('Res_down', residual, 1, K, S, padding, phase_train, True, False)
 
             # Add the Residual
             conv = tf.add(conv, residual)
@@ -769,7 +759,6 @@ class SODMatrix(object):
             if dropout and phase_train == True: conv = tf.nn.dropout(conv, dropout, noise_shape=[B, 1, 1, 1, C])
 
             return conv
-
 
     def residual_bottleneck_layer_3d(self, scope, residual, F, K, S=2, padding='SAME', phase_train=None, dropout=None):
 
@@ -790,10 +779,10 @@ class SODMatrix(object):
         with tf.variable_scope(scope) as scope:
 
             # First Convolution with BN and ReLU
-            conv = self.convolution_3d('Conv1', residual, 1, int(K/4), S, padding, phase_train, True, True)
+            conv = self.convolution_3d('Conv1', residual, 1, int(K / 4), S, padding, phase_train, True, True)
 
             # Second convolution with BN and ReLU
-            conv = self.convolution_3d('Conv2', conv, F, int(K/4), 1, padding, phase_train, True, True)
+            conv = self.convolution_3d('Conv2', conv, F, int(K / 4), 1, padding, phase_train, True, True)
 
             # Third layer without ReLU
             conv = self.convolution_3d('Conv3', conv, 1, K, 1, padding, phase_train, True, False)
@@ -814,9 +803,8 @@ class SODMatrix(object):
 
             return conv
 
-
     def res_inc_layer(self, scope, X, K, S=2, K_prob=None, padding='SAME',
-                       phase_train=None, DSC=False, BN=False, relu=False):
+                      phase_train=None, DSC=False, BN=False, relu=False):
         """
         This is a wrapper for implementing a residual layer with incepted connections
         :param scope:
@@ -854,11 +842,14 @@ class SODMatrix(object):
             if DSC:
                 conv = self.inception_layer('ConvFinal', conv2, K, 1, padding, phase_train, False, False)
                 conv = self.incepted_downsample(conv)
-            else: conv = self.inception_layer('ConvFinal', conv2, K*S, S, padding, phase_train, False, False)
+            else:
+                conv = self.inception_layer('ConvFinal', conv2, K * S, S, padding, phase_train, False, False)
 
             # Downsample the residual input if we did the conv layer. pool or strided
-            if DSC: X = self.incepted_downsample(X)
-            elif S>1: X = self.convolution('ResDown', X, 2, K*S, S, phase_train=phase_train, BN=False, relu=False)
+            if DSC:
+                X = self.incepted_downsample(X)
+            elif S > 1:
+                X = self.convolution('ResDown', X, 2, K * S, S, phase_train=phase_train, BN=False, relu=False)
 
             # The Residual block
             residual = tf.add(conv, X)
@@ -871,9 +862,8 @@ class SODMatrix(object):
 
             return residual
 
-
     def res_inc_layer_3d(self, scope, X, Fz, K, S=2, K_prob=None, padding='SAME',
-                       phase_train=None, DSC=False, BN=True, relu=True):
+                         phase_train=None, DSC=False, BN=False, relu=False):
         """
         This is a wrapper for implementing a residual layer with incepted layers between
         :param scope:
@@ -912,11 +902,14 @@ class SODMatrix(object):
             if DSC:
                 conv = self.inception_layer_3d('IncFinal', conv2, K, Fz, 1, padding, phase_train, False, False)
                 conv = self.incepted_downsample_3d(conv)
-            else: conv = self.inception_layer_3d('IncFinal', conv2, K*S, Fz, S, padding, phase_train, False, False)
+            else:
+                conv = self.inception_layer_3d('IncFinal', conv2, K * S, Fz, S, padding, phase_train, False, False)
 
             # Downsample the residual input if we did the conv layer. pool or strided
-            if DSC: X = self.incepted_downsample_3d(X)
-            elif S>1: X = self.convolution_3d('ResDown', X, 2, K*S, S, phase_train=phase_train, BN=False, relu=False)
+            if DSC:
+                X = self.incepted_downsample_3d(X)
+            elif S > 1:
+                X = self.convolution_3d('ResDown', X, 2, K * S, S, phase_train=phase_train, BN=False, relu=False)
 
             # The Residual block
             residual = tf.add(conv, X)
@@ -929,9 +922,7 @@ class SODMatrix(object):
 
             return residual
 
-
     # ***************  Miscellaneous layers ***************
-
 
     def fc7_layer(self, scope, X, neurons, dropout=False, phase_train=True, keep_prob=0.5, BN=False, relu=True, override=None, pad='VALID'):
 
@@ -994,9 +985,8 @@ class SODMatrix(object):
 
             return tf.squeeze(conv)
 
-
     def fc7_layer_3d(self, scope, X, neurons, dropout=False, phase_train=True, keep_prob=0.5,
-                  BN=False, relu=True, override=None, pad='VALID'):
+                     BN=False, relu=True, override=None, pad='VALID'):
 
         """
         Wrapper for implementing a 3D FC layer based on a conv layer
@@ -1017,7 +1007,7 @@ class SODMatrix(object):
 
             # Retreive the size of the last layer
             batch_size, height, width, depth, channel = X.get_shape().as_list()
-            if override: height, width , depth = override, override, override
+            if override: height, width, depth = override, override, override
 
             # Initialize the weights
             weights = tf.get_variable('weights', shape=[height * width * depth * channel, neurons])
@@ -1056,7 +1046,6 @@ class SODMatrix(object):
             if self.summary: self._activation_summary(conv)
 
             return tf.squeeze(conv)
-
 
     def fc7_layer_old(self, scope, X, neurons, dropout=False, phase_train=True, keep_prob=0.5, BN=False):
         """
@@ -1105,7 +1094,6 @@ class SODMatrix(object):
 
             return fc7
 
-
     def linear_layer(self, scope, X, neurons, dropout=False, phase_train=True, keep_prob=0.5, BN=False, relu=True, add_bias=True):
         """
         Wrapper for implementing a linear layer without or without relu/bn/dropout
@@ -1142,7 +1130,6 @@ class SODMatrix(object):
 
             # add biases
             if add_bias:
-
                 # Define the biases
                 bias = tf.get_variable('Bias', shape=[neurons], initializer=tf.constant_initializer(0.0))
 
@@ -1163,7 +1150,6 @@ class SODMatrix(object):
 
             return linear
 
-
     def spatial_transform_layer(self, scope, X):
         """
         Spatial transformer network implementation
@@ -1176,7 +1162,6 @@ class SODMatrix(object):
         batch_size = X.get_shape().as_list()[0]
 
         with tf.variable_scope(scope) as scope:
-
             # Set up the localisation network to calculate floc(u):
             W1 = tf.get_variable('Weights1', shape=[dim * dim * 128, 20],
                                  initializer=tf.contrib.layers.variance_scaling_initializer())
@@ -1203,7 +1188,6 @@ class SODMatrix(object):
 
             return h_trans
 
-
     def transitional_layer(self, scope, X, K, S=1, padding='SAME', phase_train=None, BN=True, relu=True):
         """
         This function implements a transition layer to insert before the FC layer. Improves regularization
@@ -1219,7 +1203,6 @@ class SODMatrix(object):
 
         # Implement an incepted transition layer here ----------------
         with tf.variable_scope(scope) as scope:
-
             # Retreive size of prior network. Prior = [batch, F, F, K]
             F = X.get_shape().as_list()[1]
 
@@ -1239,7 +1222,6 @@ class SODMatrix(object):
             inception = tf.concat([inception1, inception2, inception3], axis=-1)
 
             return tf.squeeze(inception)
-
 
     def incepted_downsample(self, X, S=2, padding='SAME'):
         """
@@ -1265,7 +1247,6 @@ class SODMatrix(object):
 
         return inception
 
-
     def incepted_downsample_3d(self, X, S=2, padding='SAME'):
         """
         This function implements a 3d downsampling layer that utilizes both an average and max pooling operation
@@ -1290,7 +1271,6 @@ class SODMatrix(object):
 
         return inception
 
-
     def global_avg_pool(self, X, S=1, padding='VALID'):
 
         """
@@ -1307,7 +1287,6 @@ class SODMatrix(object):
 
         # Now perform pool operation
         return tf.nn.avg_pool(X, [1, Fx, Fy, 1], [1, S, S, 1], padding)
-
 
     def global_avg_pool3D(self, X, S=1, padding='VALID'):
 
@@ -1327,11 +1306,7 @@ class SODMatrix(object):
         # Now perform pool operation
         return tf.nn.avg_pool3d(X, [1, Fx, Fy, Fz, 1], [1, S, S, S, 1], padding)
 
-
-
     # ***************  Loss function wrappers ***************
-
-
 
     def segmentation_SCE_loss(self, logits, labelz, class_factor=1.2):
         """
@@ -1375,7 +1350,6 @@ class SODMatrix(object):
 
         return loss
 
-
     def MSE_loss(self, logits, labels, mask_factor=0.0, mask_avg=0.0, mask_norm=0.0, debug=False):
         """
         Calculates the mean squared error for linear regression
@@ -1402,11 +1376,13 @@ class SODMatrix(object):
         mask = tf.squeeze(mask)
 
         # Print debug summary for possible dimensionality issues
-        if debug: print (labels, logits, labels-logits)
+        if debug: print(labels, logits, labels - logits)
 
         # Calculate MSE with the factor multiplied in
-        if mask_factor: MSE_loss = tf.reduce_mean(tf.multiply(tf.square(labels - logits), mask))
-        else: MSE_loss = tf.reduce_mean(tf.square(labels - logits))
+        if mask_factor:
+            MSE_loss = tf.reduce_mean(tf.multiply(tf.square(labels - logits), mask))
+        else:
+            MSE_loss = tf.reduce_mean(tf.square(labels - logits))
 
         # Output the summary of the MSE and MAE
         if self.summary:
@@ -1418,7 +1394,6 @@ class SODMatrix(object):
 
         # For now return MSE loss, add L2 regularization below later
         return MSE_loss
-
 
     def SCE_loss(self, logits, labels, num_classes):
         """
@@ -1444,7 +1419,6 @@ class SODMatrix(object):
         tf.add_to_collection('losses', loss)
 
         return loss
-
 
     def cost_sensitive_loss(self, logits, labels, loss_factor, num_classes):
         """
@@ -1482,7 +1456,6 @@ class SODMatrix(object):
 
         return loss
 
-
     def calc_L2_Loss(self, L2_gamma):
         """
         Calculates the L2 Loss
@@ -1504,7 +1477,6 @@ class SODMatrix(object):
 
         return L2_loss
 
-
     def pixel_wise_softmax(self, output_map):
         """
         calculates a pixel by pixel softmax score from a networks output map
@@ -1521,7 +1493,6 @@ class SODMatrix(object):
 
         # return the result of the softmax
         return tf.div(exponential_map, tensor_sum_exp)
-
 
     def DICE_loss(self, logitz, labelz, num_classes=2, network_dims=64):
 
@@ -1588,9 +1559,7 @@ class SODMatrix(object):
 
         return loss
 
-
     # *************** Utility Functions ***************
-
 
     def batch_normalization(self, conv, phase_train, scope):
 
@@ -1603,7 +1572,6 @@ class SODMatrix(object):
         """
 
         return tf.layers.batch_normalization(conv, training=phase_train, momentum=0.98)
-
 
     def transformer(self, U, theta, out_size, name='SpatialTransformer', **kwargs):
         """Spatial Transformer Layer
@@ -1769,7 +1737,6 @@ class SODMatrix(object):
             output = _transform(theta, U, out_size)
             return output
 
-
     def batch_transformer(self, U, thetas, out_size, name='BatchSpatialTransformer'):
         """Batch Spatial Transformer Layer
 
@@ -1792,7 +1759,6 @@ class SODMatrix(object):
             input_repeated = tf.gather(U, tf.reshape(indices, [-1]))
             return self.transformer(input_repeated, thetas, out_size)
 
-
     def _activation_summary(self, x):
         """
         Helper to create summaries for activations
@@ -1811,7 +1777,6 @@ class SODMatrix(object):
 
 
 class SODLoss(object):
-
     """
     For wrapping up all of the network loss functions
     """
@@ -1819,7 +1784,6 @@ class SODLoss(object):
     def __init__(self, n_class):
 
         self._num_classes = n_class
-
 
     def labels_to_one_hot(self, ground_truth, num_classes=1):
         """
@@ -1862,7 +1826,6 @@ class SODLoss(object):
         # resume the spatial dims
         one_hot = tf.sparse_reshape(one_hot, output_shape)
         return one_hot
-
 
     def generalized_dice_loss(self, prediction, ground_truth, weight_map=None, type_weight='Square'):
         """
@@ -1923,8 +1886,7 @@ class SODLoss(object):
             generalised_dice_numerator / generalised_dice_denominator
         generalised_dice_score = tf.where(tf.is_nan(generalised_dice_score), 1.0,
                                           generalised_dice_score)
-        return 1- generalised_dice_score
-
+        return 1 - generalised_dice_score
 
     def dice_plus_xent_loss(self, prediction, ground_truth, weight_map=None):
         """
@@ -1972,7 +1934,6 @@ class SODLoss(object):
 
         return loss_dice + loss_xent
 
-
     def sensitivity_specificity_loss(self, prediction, ground_truth, weight_map=None, r=0.05):
         """
         Function to calculate a multiple-ground_truth version of
@@ -2013,7 +1974,6 @@ class SODLoss(object):
 
         return tf.reduce_sum(r * specificity_part + (1 - r) * sensitivity_part)
 
-
     def cross_entropy(self, prediction, ground_truth, weight_map=None):
         """
         Function to calculate the cross-entropy loss function
@@ -2038,7 +1998,6 @@ class SODLoss(object):
         weight_sum = tf.maximum(tf.reduce_sum(weight_map), 1e-6)
         return tf.reduce_sum(entropy * weight_map / weight_sum)
 
-
     def cross_entropy_dense(self, prediction, ground_truth, weight_map=None):
         if weight_map is not None:
             raise NotImplementedError
@@ -2046,7 +2005,6 @@ class SODLoss(object):
         entropy = tf.nn.softmax_cross_entropy_with_logits(
             logits=prediction, labels=ground_truth)
         return tf.reduce_mean(entropy)
-
 
     def wasserstein_disagreement_map(self, prediction, ground_truth, weight_map=None, M=None):
         """
@@ -2082,7 +2040,6 @@ class SODLoss(object):
                     M[i, j] * tf.multiply(unstack_pred[i], unstack_labels[j]))
         wass_dis_map = tf.add_n(pairwise_correlations)
         return wass_dis_map
-
 
     def generalised_wasserstein_dice_loss(self, prediction, ground_truth, weight_map=None):
         """
@@ -2128,9 +2085,7 @@ class SODLoss(object):
         WGDL = 1. - (2. * true_pos) / (2. * true_pos + all_error)
         return tf.cast(WGDL, dtype=tf.float32)
 
-
     def dice(self, prediction, ground_truth, weight_map=None):
-
         """
         Function to calculate the dice loss with the definition given in
 
@@ -2162,7 +2117,8 @@ class SODLoss(object):
                 tf.sparse_reduce_sum(one_hot * weight_map_nclasses,
                                      reduction_axes=[0])
         else:
-            dice_numerator = 2.0 * tf.sparse_reduce_sum(one_hot * prediction, reduction_axes=[0])
+            dice_numerator = 2.0 * tf.sparse_reduce_sum(
+                one_hot * prediction, reduction_axes=[0])
             dice_denominator = \
                 tf.reduce_sum(tf.square(prediction), reduction_indices=[0]) + \
                 tf.sparse_reduce_sum(one_hot, reduction_axes=[0])
@@ -2172,7 +2128,6 @@ class SODLoss(object):
         # dice_score.set_shape([num_classes])
         # minimising (1 - dice_coefficients)
         return 1.0 - tf.reduce_mean(dice_score)
-
 
     def dice_nosquare(self, prediction, ground_truth, weight_map=None):
         """
@@ -2212,8 +2167,7 @@ class SODLoss(object):
         # minimising (1 - dice_coefficients)
         return 1.0 - tf.reduce_mean(dice_score)
 
-
-    def tversky(self,prediction, ground_truth, weight_map=None, alpha=0.5, beta=0.5):
+    def tversky(self, prediction, ground_truth, weight_map=None, alpha=0.5, beta=0.5):
         """
         Function to calculate the Tversky loss for imbalanced data
 
@@ -2258,7 +2212,6 @@ class SODLoss(object):
         score = numerator / denominator
         return 1.0 - tf.reduce_mean(score)
 
-
     def dice_dense(self, prediction, ground_truth, weight_map=None):
         """
         Computing mean-class Dice similarity.
@@ -2288,7 +2241,6 @@ class SODLoss(object):
         dice_score = (dice_numerator + epsilon) / (dice_denominator + epsilon)
         return 1.0 - tf.reduce_mean(dice_score)
 
-
     def dice_dense_nosquare(self, prediction, ground_truth, weight_map=None):
         """
         Computing mean-class Dice similarity with no square terms in the denominator
@@ -2316,15 +2268,3 @@ class SODLoss(object):
 
         dice_score = (dice_numerator + epsilon) / (dice_denominator + epsilon)
         return 1.0 - tf.reduce_mean(dice_score)
-
-
-    def weighted_cross_entropy(self, prediction, ground_truth, beta):
-        """
-        Weighted cross entropy where all positives get weighted by a coefficient
-        :param prediction:
-        :param ground_truth:
-        :param beta: > 1 decreases false negatives, <1 decreases false positives
-        :return:
-        """
-
-        return tf.nn.weighted_cross_entropy_with_logits(ground_truth, prediction, beta)

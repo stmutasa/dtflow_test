@@ -7,47 +7,23 @@ It then contains functions to store the file as a protocol buffer
 
 """
 
-import glob, os, csv, random, cv2, math, pickle, time
-#import mudicom, astra
+import glob, os, csv, random, cv2, math, pickle
 
 import numpy as np
 import pydicom as dicom
 import nibabel as nib
 import tensorflow as tf
 import SimpleITK as sitk
+import scipy.ndimage as scipy
 import matplotlib.image as mpimg
 import pandas as pd
 
 from scipy.io import loadmat
-import scipy.ndimage as scipy
-from scipy.ndimage import binary_fill_holes
-
-import imageio
-from medpy.io import save as mpsave
-import nrrd
-import mclahe as mc
-
-import skimage.exposure as hist
 from skimage import morphology
-from skimage.filters.rank import median
-from skimage.measure import regionprops
-from skimage.morphology import disk
-from skimage.segmentation import felzenszwalb
-from skimage.transform import rescale
+import imageio
 
-from moviepy.editor import ImageSequenceClip
-
-# Encryption imports
-import secrets
-from base64 import urlsafe_b64encode as b64e, urlsafe_b64decode as b64d
-
-from cryptography.fernet import Fernet
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 class SODLoader():
-
     """
     SOD Loader class is a class for loading all types of data into protocol buffers
     """
@@ -71,160 +47,11 @@ class SODLoader():
         self.origin = None
         self.spacing = None
         self.dims = None
-        self.patient = None     # Usually the accession number
-
+        self.patient = None  # Usually the accession number
 
     """
      Data Loading Functions. Support for DICOM, Nifty, CSV
     """
-
-
-    def deID_DICOMs(self, path, password, delete=True):
-
-        """
-        This function deidentifies every DICOM file within every child directory provided in path
-        :param path: The root directory to start working with
-        :param password: A password to create an encrypted key of the pt data
-        :param delete: Whether to delete the original file. Really should always be True unless debugging
-        :return:
-        """
-
-        # Load all the files in all of the subfolders here
-        path = os.path.join(path, '**/*.*')
-        filenames = glob.glob(path, recursive=True)
-        print('De-Identifying %s files... from root: ' % len(filenames), path)
-
-        # remove nifti and nrrd files
-        filenames = [x for x in filenames if 'nii' not in x or 'nrrd' not in x]
-
-        index = 0
-        for file in filenames:
-
-            # PyDicom will only read dicom files, this is a nice checkpoint for non dicom files
-            try:
-                dataset = dicom.dcmread(file)
-            except:
-                print(file, ' is not a DICOM')
-                continue
-
-            # Patient sex is always there, if not, use this as a proxy that this patient has already been done
-            try:
-                _ = dataset.PatientSex
-            except:
-                print('Already deidentified %s' % file)
-                continue
-
-            ###############################################################################
-            # pydicom allows to remove private tags using ``remove_private_tags`` method
-
-            try:
-                dataset.remove_private_tags()
-            except:
-                print('Private tag error with ', file)
-                continue
-
-            ###############################################################################
-            # Data elements of type 3 (optional) can be easily deleted using ``del`` or ``delattr``
-
-            # Someteimes age at exam is not listed
-            try:
-                age = dataset.PatientAge
-            except:
-                age = str(int(dataset.StudyDate[:4]) - int(dataset.PatientBirthDate[:4]))
-
-            # Get the ACCno
-            accno = dataset.AccessionNumber
-            keystring = accno + dataset.PatientSex + age + '_' + dataset.PatientID
-
-            # Create an encrypted Accno
-            encrypted_accno = self.password_encrypt(keystring, password, return_string=True)
-
-            # Delete Patient tags
-            if 'OtherPatientIDs' in dataset: delattr(dataset, 'OtherPatientIDs')
-            if 'PatientAddress' in dataset: delattr(dataset, 'PatientAddress')
-            if 'PatientAge' in dataset: delattr(dataset, 'PatientAge')
-            if 'PatientSex' in dataset: delattr(dataset, 'PatientSex')
-            if 'PatientID' in dataset: delattr(dataset, 'PatientID')
-
-            # Institution tags
-            if 'ReferringPhysicianName' in dataset: delattr(dataset, 'ReferringPhysicianName')
-            if 'InstitutionAddress' in dataset: delattr(dataset, 'InstitutionAddress')
-            if 'InstitutionName' in dataset: delattr(dataset, 'InstitutionName')
-            if 'IssuerOfPatientID' in dataset: delattr(dataset, 'IssuerOfPatientID')
-
-            # Delete the year of acquisition, keep time
-            if 'AcquisitionDate' in dataset: delattr(dataset, 'AcquisitionDate')
-            if 'ContentDate' in dataset: delattr(dataset, 'ContentDate')
-            if 'StudyDate' in dataset: delattr(dataset, 'StudyDate')
-            if 'SeriesDate' in dataset: delattr(dataset, 'SeriesDate')
-
-            # Replace tags that may be used to list patients, use time.time to pick a random number
-            strings = time.strftime("%Y,%m,%d")
-            t = strings.split(',')
-            z = ''
-            bdate = accno[:4] + z.join(t)[-4:]
-            accno2 = z.join(t)[:4] + accno[-4:]
-            if 'PatientBirthDate' in dataset: dataset.data_element('PatientBirthDate').value = bdate
-            if 'PatientName' in dataset: dataset.data_element('PatientName').value = 'De Identified_' + str(time.time())[-6:]
-            if 'AccessionNumber' in dataset: dataset.data_element('AccessionNumber').value = accno2
-            if 'StudyID' in dataset: dataset.data_element('StudyID').value = encrypted_accno
-
-            ##############################################################################
-            # Finally, save the file again
-
-            # Delete the original
-            if delete: os.remove(file)
-
-            # Save this new one
-            dataset.save_as(file)
-
-            if index % (len(filenames) // 10) == 0: print('*' * 20,
-                                                          '\nDe-Identified %s of %s files' % (index, len(filenames)))
-            index += 1
-            del dataset, accno, keystring, encrypted_accno, accno2, bdate
-
-
-    def ReID_DICOMs(self, password, file):
-
-        """
-        Function that returns a patient's accession number, MRN, gender, and date of birth
-        This only works on files deidentified by the DeID_DICOMs function
-        :param password: The password used to generate the key when the dicom was saved
-        :param file: DICOM file to use to id this patient, one file per accession
-        :return: {'MRN', 'Accession', 'Sex', 'Age'}
-        """
-
-        # PyDicom will only read dicom files, this is a nice checkpoint for non dicom files
-        try:
-            dataset = dicom.dcmread(file)
-        except:
-            print(file, ' is not a DICOM')
-            return None
-
-        # Return the information
-        encrypted_info = dataset.StudyID
-        try:
-            decrypted_info = self.password_decrypt(encrypted_info, password, return_string=True)
-        except:
-            print('Password %s is incorrect!' % password)
-            return None
-
-        # Decypher
-        MRN = decrypted_info.split('_')[-1]
-        if 'F' in decrypted_info:
-            Accno = decrypted_info.split('F')[0]
-            Sex = 'F'
-            Age = decrypted_info.split('F')[1].split('_')[0]
-        else:
-            Sex = 'M'
-            Accno = decrypted_info.split('M')[0]
-            Age = decrypted_info.split('M')[1].split('_')[0]
-
-        # --- Save first slice for header information
-        header = {'MRN': MRN, 'Accession': Accno, 'Sex': Sex, 'Age': Age}
-
-        return header
-
 
     def load_DICOM_3D(self, path, dtype=np.int16, sort=False, overwrite_dims=513, display=False, return_header=False):
 
@@ -244,21 +71,25 @@ class SODLoader():
         """
 
         # Some DICOMs end in .dcm, others do not
-        fnames = list()
-        for (dirpath, dirnames, filenames) in os.walk(path):
-            fnames += [os.path.join(dirpath, file) for file in filenames]
+        # if path[-3:] != 'dcm': fnames = [path + '/' + s for s in os.listdir(path) if s[-3:].lower() == 'dcm']
+        # else: fnames = [path]
+        fnames = self.retreive_filelist('**', True, path)
 
         # Sort the slices
         ndimage = [dicom.read_file(path, force=True) for path in fnames]
         if sort:
-            if 'Lung' in sort: ndimage = self.sort_DICOMS_Lung(ndimage, display, path)
-            elif 'PE' in sort: ndimage = self.sort_DICOMS_PE(ndimage, display, path)
+            if 'Lung' in sort:
+                ndimage = self.sort_DICOMS_Lung(ndimage, display, path)
+            elif 'PE' in sort:
+                ndimage = self.sort_DICOMS_PE(ndimage, display, path)
         ndimage, fnames, orientation, st, shape, four_d = self.sort_dcm(ndimage, fnames)
         ndimage.sort(key=lambda x: int(x.ImagePositionPatient[2]))
 
         # Retreive the dimensions of the scan
-        try: dims = np.array([int(ndimage[0].Columns), int(ndimage[0].Rows)])
-        except: dims = np.array([overwrite_dims, overwrite_dims])
+        try:
+            dims = np.array([int(ndimage[0].Columns), int(ndimage[0].Rows)])
+        except:
+            dims = np.array([overwrite_dims, overwrite_dims])
 
         # Retreive the spacing of the pixels in the XY dimensions
         pixel_spacing = ndimage[0].PixelSpacing
@@ -274,11 +105,13 @@ class SODLoader():
 
         # --- Save first slice for header information
         header = {'orientation': orientation, 'slices': shape[1], 'channels': shape[0],
-                  'fnames': fnames, 'tags': ndimage[0], '4d': four_d, 'spacing': numpySpacing, 'origin': numpyOrigin}
+                  'fnames': fnames, 'tags': ndimage[0], '4d': four_d}
 
         # Finally, make the image actually equal to the pixel data and not the header
-        try: image = np.stack([self.read_dcm_uncompressed(s) for s in ndimage])
-        except: image = np.stack([self.read_dcm_compressed(f) for f in fnames])
+        try:
+            image = np.stack([self.read_dcm_uncompressed(s) for s in ndimage])
+        except:
+            image = np.stack([self.read_dcm_compressed(f) for f in fnames])
 
         image = self.compress_bits(image)
 
@@ -296,110 +129,31 @@ class SODLoader():
                 image[slice_number] += np.int16(intercept)
 
         if return_header:
-            return image, header
+            return image, numpyOrigin, numpySpacing, dims, header
         else:
             return image, numpyOrigin, numpySpacing, dims
 
-    def load_DICOM_Header(self, path, multiple=True):
-
+    def load_nrrd_3D(self, path, dtype=np.int16):
         """
-        This function loads a DICOM folder and stores it into a numpy array. From Kaggle
-        :param: path: The path of the DICOM folder
-        :param multiple: Whether the path contains single or multiple files of the same accno
-        :return header: a dictionary of the file's header information
-        """
-
-        # For now just return accession number of the first file
-
-        # Some DICOMs end in .dcm, others do not
-        fnames = list()
-        for (dirpath, dirnames, filenames) in os.walk(path):
-            fnames += [os.path.join(dirpath, file) for file in filenames]
-
-        # Sort the slices
-        try:
-            ndimage = dicom.read_file(fnames[0])
-        except:
-            ndimage = dicom.read_file(fnames[1])
-
-        # --- Save first slice for header information
-        header = {'fname': fnames[0], 'tags': ndimage, 'path': path}
-
-        return header
-
-    def load_nrrd(self, path, dtype=np.int16, pad_shape=None, dim3d=True):
-
-        """
-        Loads an NRRD with pynrrd and returns a numpy array
-        :param path: file to load
-        :param dtype: filetype to return
-        :param pad_shape: NRRD sometimes doesnt save the whole volume (just the segments). And we have to pad it
-        If you leave it at none we wont pad, otherwise we will
-        :param dim3d: 3D or 2D
-        :return: A numpy array
-        """
-
-        # Read file and return a tuple and header: z x,y
-        data, header = nrrd.read(path, index_order='C')
-
-        # Pad the segmentations to fill the volume shape desired, start with 3D mode
-        if pad_shape and dim3d:
-
-            # initiate the new array
-            pad_shape = np.asarray(pad_shape)
-            data_pad = np.zeros([pad_shape[0], pad_shape[1], pad_shape[2], data.shape[3]])
-
-            # Get the offset origin  and extent from 3D slicer. This is in XYZ format so reverse
-            origins = header['Segmentation_ReferenceImageExtentOffset'].split(' ')
-            orig = [int(x) for x in origins] # XYZ
-            orig = orig[::-1]
-            end = [orig[0]+data.shape[0], orig[1]+data.shape[1], orig[2]+data.shape[2]]
-
-            # Generate the array
-            data_pad[orig[0]:end[0], orig[1]:end[1], orig[2]:end[2], :] = data
-
-            # Return values to data
-            data, data_pad = data_pad, data
-
-            # Slicer swaps the y and x axes, so return to native numpy form
-            data = np.swapaxes(data, 1, 2)
-
-        # The 2D version
-        elif pad_shape and not dim3d:
-
-            # initiate the new array
-            pad_shape = np.asarray(pad_shape)
-            data_pad = np.zeros([pad_shape[0], pad_shape[1], data.shape[2]])
-
-            # Get the offset origin  and extent from 3D slicer. This is in XYZ format so reverse
-            origins = header['Segmentation_ReferenceImageExtentOffset'].split(' ')
-            orig = [int(x) for x in origins]  # XY
-            orig = orig[::-1]
-            end = [orig[0] + data.shape[0], orig[1] + data.shape[1]]
-
-            # Generate the array
-            data_pad[orig[0]:end[0], orig[1]:end[1], :] = data
-
-            # Return values to data
-            data, data_pad = data_pad, data
-
-            # Slicer swaps the y and x axes, so return to native numpy form
-            data = np.swapaxes(data, 0, 1)
-
-        return np.squeeze(data.astype(dtype)), header
-
-
-    def save_nrrd(self, path, data):
-
-        """
-        Saves a numpy array as an nrrd
+        Load a 3D nrrd file with header info
         :param path:
-        :param data:
-        :return:
+        :param dtype:
+        :return: image, origin, spacing,shape
         """
 
-        nrrd.write(path, data)
+        # Load the file
+        image_all = sitk.ReadImage(path)
 
+        # get the image data
+        image = np.squeeze(sitk.GetArrayFromImage(image_all))
+
+        # Retreive the origin
+        origin = np.asarray(image_all.GetOrigin())
+
+        # retreive spacing
+        spacing = np.asarray(image_all.GetSpacing())
+
+        return image.astype(dtype), origin, spacing, image.shape
 
     def load_MAT(self, path):
         """
@@ -409,7 +163,6 @@ class SODLoader():
         """
 
         return loadmat(path)
-
 
     def load_DICOM_2D(self, path, dtype=np.int16):
 
@@ -428,41 +181,51 @@ class SODLoader():
         try:
             ndimage = dicom.read_file(path)
         except:
-            print ('Unable to Load DICOM file: %s' % path)
+            print('Unable to Load DICOM file: %s' % path)
             return -1
 
         # Retreive the dimensions of the scan
-        try: dims = np.array([int(ndimage.Columns), int(ndimage.Rows)])
-        except: dims = 0
+        try:
+            dims = np.array([int(ndimage.Columns), int(ndimage.Rows)])
+        except:
+            dims = 0
 
         # Retreive window level if available
-        try: window = [int(ndimage.WindowCenter), int(ndimage.WindowWidth)]
-        except: window = 0
+        try:
+            window = [int(ndimage.WindowCenter), int(ndimage.WindowWidth)]
+        except:
+            window = 0
 
         # Retreive photometric interpretation (1 = negative XRay) if available
-        try: photometric = int(ndimage.PhotometricInterpretation[-1])
-        except: photometric = None
+        try:
+            photometric = int(ndimage.PhotometricInterpretation[-1])
+        except:
+            photometric = None
 
         # Retreive the accession number
-        try: accno = ndimage.AccessionNumber
-        except: accno = 0
+        try:
+            accno = ndimage.AccessionNumber
+        except:
+            accno = 0
 
         # Finally, make the image actually equal to the pixel data and not the header
-        try: image = np.asarray(ndimage.pixel_array, dtype)
+        try:
+            image = np.asarray(ndimage.pixel_array, dtype)
         except:
-            try: image = np.asarray(ndimage.pixel_array)
+            try:
+                image = np.asarray(ndimage.pixel_array)
             except:
-                try: # Try using imageio
+                try:  # Try using imageio
                     dirname = os.path.dirname(path)
                     image = imageio.imread(path, 'DICOM')
-                    print ('Loaded DICOM with imagio ', path)
+                    print('Loaded DICOM with imagio ', path)
                 except:
-                    try: # Try using Simple ITK
+                    try:  # Try using Simple ITK
                         image = np.squeeze(self._load_DICOM_ITK(path))
                         image = np.swapaxes(image, -1, 0)
                         print('Loaded DICOM with ITK ', path)
                     except:
-                        print ('Unable to retreive Image Pixel Array: ', path)
+                        print('Unable to retreive Image Pixel Array: ', path)
                         return -1
 
         # Convert to Houndsfield units if slope and intercept is available:
@@ -478,13 +241,10 @@ class SODLoader():
 
             # Reset the Intercept
             image += dtype(intercept)
-        except: pass
+        except:
+            pass
 
-        # --- Save first slice for header information
-        header = {'fname': path, 'tags': ndimage}
-
-        return image, accno, window, photometric, header
-
+        return image, accno, dims, window, photometric
 
     def _load_DICOM_ITK(self, path):
 
@@ -499,8 +259,6 @@ class SODLoader():
         ndimage = sitk.GetArrayFromImage(itkimage)
 
         return ndimage
-
-
 
     def Retrieve_DICOM_Header(self, path):
 
@@ -539,12 +297,16 @@ class SODLoader():
             spacing = None
 
         # Retreive the dummy accession number
-        try: accno = ndimage.AccessionNumber
-        except: accno = None
+        try:
+            accno = ndimage.AccessionNumber
+        except:
+            accno = None
 
         # Retreive gender
-        try: sex = ndimage.PatientSex
-        except: sex = None
+        try:
+            sex = ndimage.PatientSex
+        except:
+            sex = None
 
         # Retreive Age
         try:
@@ -553,31 +315,38 @@ class SODLoader():
             age = None
 
         # Now retreive the date of the study
-        try: study_date = ndimage.StudyDate
+        try:
+            study_date = ndimage.StudyDate
         except:
-            try: study_date = ndimage.SeriesDate
+            try:
+                study_date = ndimage.SeriesDate
             except:
-                try: study_date = ndimage.AcquisitionDate
+                try:
+                    study_date = ndimage.AcquisitionDate
                 except:
-                    try: study_date = ndimage.ContentDate
-                    except: study_date = None
+                    try:
+                        study_date = ndimage.ContentDate
+                    except:
+                        study_date = None
 
-
-        try: study_time = ndimage.StudyTime
+        try:
+            study_time = ndimage.StudyTime
         except:
-            try: study_time = ndimage.SeriesTime
+            try:
+                study_time = ndimage.SeriesTime
             except:
-                try: study_time = ndimage.AcquisitionTime
+                try:
+                    study_time = ndimage.AcquisitionTime
                 except:
-                    try: study_time = ndimage.ContentTime
-                    except: study_time = None
+                    try:
+                        study_time = ndimage.ContentTime
+                    except:
+                        study_time = None
 
-
-        return_dict = { 'dimensions': dims, 'window_level': window, 'photometric': photometric, 'accession': accno, 'sex': sex,
-                        'modality': modality, 'spacing': spacing, 'age': age, 'study_date':study_date, 'study_time': study_time}
+        return_dict = {'dimensions': dims, 'window_level': window, 'photometric': photometric, 'accession': accno, 'sex': sex,
+                       'modality': modality, 'spacing': spacing, 'age': age, 'study_date': study_date, 'study_time': study_time}
 
         return return_dict
-
 
     def load_BoneAge(self, path, dtype=np.int16):
 
@@ -611,12 +380,16 @@ class SODLoader():
         dims = np.array([int(ndimage.Columns), int(ndimage.Rows)])
 
         # Retreive window level if available
-        try: window = [int(ndimage.WindowCenter), int(ndimage.WindowWidth)]
-        except: window = None
+        try:
+            window = [int(ndimage.WindowCenter), int(ndimage.WindowWidth)]
+        except:
+            window = None
 
         # Retreive photometric interpretation (1 = negative XRay) if available
-        try: photometric = int(ndimage.PhotometricInterpretation[-1])
-        except: photometric = None
+        try:
+            photometric = int(ndimage.PhotometricInterpretation[-1])
+        except:
+            photometric = None
 
         # Retreive the dummy accession number
         accno = int(ndimage.AccessionNumber)
@@ -637,10 +410,10 @@ class SODLoader():
 
             # Reset the Intercept
             image += dtype(intercept)
-        except: pass
+        except:
+            pass
 
         return image, accno, dims, window, photometric
-
 
     def load_CSV_Dict(self, indexname, path):
         """
@@ -675,20 +448,17 @@ class SODLoader():
 
         return return_dict
 
-
-    def save_Dict_CSV(self, dict, path, orient='index'):
+    def save_Dict_CSV(self, dict, path):
         """
         Saves a dictionary as a .CSV file
         :param dict: the input dictionary
         :param path: path to save
-        :param orient: Key Orientation, index or columns
         :return:
         """
 
         # Define data frame and create a CSV from it
-        df = pd.DataFrame.from_dict(dict, orient=orient)
+        df = pd.DataFrame.from_dict(dict, orient='index')
         df.to_csv(path)
-
 
     def save_dict_pickle(self, dictionary, data_root='data/filetypes'):
 
@@ -702,7 +472,6 @@ class SODLoader():
         filename = data_root + '_pickle.p'
         pickle._dump(dictionary, open(filename, 'wb'))
 
-
     def load_dict_pickle(self, filename='data/filetypes_pickle.p'):
 
         """
@@ -711,7 +480,6 @@ class SODLoader():
         :return: the loaded dictionary
         """
         return pickle.load(open(filename, 'rb'))
-
 
     def save_dict_filetypes(self, dict_index_0, data_root='data/filetypes'):
 
@@ -724,16 +492,14 @@ class SODLoader():
 
         pickle_dic = {}
         for key, val in dict_index_0.items():
-
             # Generate the type dictionary
             pickle_dic[key] = str(type(val))[8:-2]
 
             # Save the dictionary
             self.save_dict_pickle(pickle_dic, data_root)
 
-
     def load_tfrecords(self, dataset, data_dims=[], image_dtype=tf.float32, segments='label_data',
-                       segments_dtype=tf.float32, segments_shape = []):
+                       segments_dtype=tf.float32, segments_shape=[]):
 
         """
         Function to load a tfrecord protobuf. numpy arrays (volumes) should have 'data' in them.
@@ -765,85 +531,24 @@ class SODLoader():
             if 'bbox' in key:
                 data[key] = tf.decode_raw(features[key], tf.float32)
                 data[key] = tf.reshape(data[key], shape=[-1, 5])
-                #data[key] = tf.cast(data[key], tf.float32)
+                # data[key] = tf.cast(data[key], tf.float32)
 
             elif segments in key:
                 data[key] = tf.decode_raw(features[key], segments_dtype)
                 data[key] = tf.reshape(data[key], shape=segments_shape)
-                #data[key] = tf.cast(data[key], tf.float32)
+                # data[key] = tf.cast(data[key], tf.float32)
 
             elif 'data' in key:
                 data[key] = tf.decode_raw(features[key], image_dtype)
                 data[key] = tf.reshape(data[key], shape=data_dims)
                 # data[key] = tf.cast(data[key], tf.float32)
 
-            elif 'str' in str(value):
+            elif 'str' in value:
                 data[key] = tf.cast(features[key], tf.string)
             else:
                 data[key] = tf.string_to_number(features[key], tf.float32)
 
         return data
-
-    def load_tfrecord_labels(self, dataset, segments='label_data'):
-
-        """
-        Function to load a tfrecord labels only, not the images. Useful when we want to split this up
-        """
-
-        # Pickle load
-        loaded_dict = self.load_dict_pickle()
-
-        # Populate the feature dict
-        feature_dict = {'id': tf.FixedLenFeature([], tf.int64)}
-        for key, value in loaded_dict.items(): feature_dict[key] = tf.FixedLenFeature([], tf.string)
-
-        # Parses one protocol buffer file into the features dictionary which maps keys to tensors with the data: 'key': parse_single_eg
-        features = tf.parse_single_example(dataset, features=feature_dict)
-
-        # Make a data dictionary and cast it to floats
-        data = {'id': tf.cast(features['id'], tf.float32)}
-        for key, value in loaded_dict.items():
-
-            # Depending on the type key or entry value, use a different cast function on the feature
-            if 'bbox' in key:
-                data[key] = tf.decode_raw(features[key], tf.float32)
-                data[key] = tf.reshape(data[key], shape=[-1, 5])
-
-            elif segments in key:
-                data[key] = features[key]
-
-            elif 'data' in key:
-                data[key] = features[key]
-
-            elif 'str' in str(value):
-                data[key] = tf.cast(features[key], tf.string)
-            else:
-                data[key] = tf.string_to_number(features[key], tf.float32)
-
-        return data
-
-    def load_tfrecord_images(self, dataset, data_dims=[], image_dtype=tf.float32, segments='label_data',
-                             segments_dtype=tf.float32, segments_shape=[]):
-
-        """
-        Function to load a tfrecords images only. Useful when we want to split this up
-        """
-
-        for key, value in dataset.items():
-
-            # Depending on the type key or entry value, use a different cast function on the feature
-            if segments in key:
-                dataset[key] = tf.decode_raw(value, segments_dtype)
-                dataset[key] = tf.reshape(dataset[key], shape=segments_shape)
-
-            elif 'data' in key:
-                dataset[key] = tf.decode_raw(value, image_dtype)
-                dataset[key] = tf.reshape(dataset[key], shape=data_dims)
-
-            else:
-                continue
-
-        return dataset
 
     def load_tfrecords_dataset(self, filenames):
 
@@ -851,8 +556,7 @@ class SODLoader():
         filename_queue = tf.train.string_input_producer(filenames, num_epochs=None)
 
         reader = tf.TFRecordReader()  # Instantializes a TFRecordReader which outputs records from a TFRecords file
-        _, serialized_example = reader.read(
-            filename_queue)  # Returns the next record (key:value) produced by the reader
+        _, serialized_example = reader.read(filename_queue)  # Returns the next record (key:value) produced by the reader
 
         # Pickle load
         loaded_dict = self.load_dict_pickle()
@@ -891,70 +595,6 @@ class SODLoader():
         #
         # return data
 
-    def oversample_class(self, example_class, actual_dists=[0.5, 0.5], desired_dists=[], oversampling_coef=0.9):
-
-        """
-            Calculates how many copies to make of each class in order to oversample some classes
-            class_dist is an array with the actual distribution of each class
-            class_target_dist is an array with the target distribution of each class, defaults to equal
-            oversampling_coef smooths the calculation if equal to 0 then oversample_classes() always returns 1
-            returns an int64
-        """
-
-        # Get this classes distributions
-        if not desired_dists: desired_dists = [1 / len(actual_dists)] * len(actual_dists)
-        desired_dists = tf.cast(desired_dists, dtype=tf.float32)
-        actual_dists = tf.cast(actual_dists, dtype=tf.float32)
-
-        class_target_dist = tf.squeeze(desired_dists[tf.cast(example_class, tf.int32)])
-        class_dist = tf.squeeze(actual_dists[tf.cast(example_class, tf.int32)])
-
-        # Get a ratio between these two. If overrepresented, this returns <1 else >1
-        prob_ratio = tf.cast(class_target_dist / class_dist, dtype=tf.float32)
-
-        # Factor to soften the chance of generating repeats, if oversampling_coef==0 we recover original distribution
-        prob_ratio = prob_ratio ** oversampling_coef
-
-        # For oversampled classes (low ratio) we # want to return 1. Otherwise save as int with math.floor
-        prob_ratio = tf.math.maximum(prob_ratio, 1)
-        repeat_count = tf.math.floor(prob_ratio)
-
-        # To handle floats, there is a chance to return a higher integer than the floor above.
-        # i.e. prob_ratio 1.9 returns 2 instead of 1 90% of the time
-        repeat_residual = prob_ratio - repeat_count
-        residual_acceptance = tf.math.less_equal(tf.random_uniform([], dtype=tf.float32), repeat_residual)
-
-        # Convert to integers and return
-        residual_acceptance = tf.cast(residual_acceptance, tf.int64)
-        repeat_count = tf.cast(repeat_count, dtype=tf.int64)
-        return repeat_count + residual_acceptance
-
-    def undersample_filter(self, example_class, actual_dists=[0.5, 0.5], desired_dists=[], undersampling_coef=0.5):
-
-        """
-        Lets you know if you should reject this sample or not
-        Must have a 'class_dist' index indicating the actual class frequency 0-1
-        Must have 'class_target_dist' index indicating the desired frequency 0-1
-        undersampling_coef if equal to 0 then undersampling_filter() always returns True
-        returns true or false
-        """
-
-        # Get this classes distributions
-        if not desired_dists: desired_dists = [1 / len(actual_dists)] * len(actual_dists)
-        desired_dists = tf.cast(desired_dists, dtype=tf.float32)
-        actual_dists = tf.cast(actual_dists, dtype=tf.float32)
-
-        class_target_dist = tf.squeeze(desired_dists[tf.cast(example_class, tf.int32)])
-        class_dist = tf.squeeze(actual_dists[tf.cast(example_class, tf.int32)])
-
-        prob_ratio = tf.cast(class_target_dist / class_dist, dtype=tf.float32)
-        prob_ratio = prob_ratio ** undersampling_coef
-        prob_ratio = tf.minimum(prob_ratio, 1.0)
-
-        acceptance = tf.less_equal(tf.random_uniform([], dtype=tf.float32), prob_ratio)
-        # predicate must return a scalar boolean tensor
-        return acceptance
-
     def load_NIFTY(self, path, reshape=True):
         """
         This function loads a .nii.gz file into a numpy array with dimensions Z, Y, X, C
@@ -963,18 +603,19 @@ class SODLoader():
         :return:
         """
 
-        #try:
+        # try:
 
         # Load the data from the nifty file
         raw_data = nib.load(path)
 
         # Reshape the image data from NiB's XYZ to numpy's ZYXC
-        if reshape: data = self.reshape_NHWC(raw_data.get_data(), False)
-        else: data = raw_data.get_data()
+        if reshape:
+            data = self.reshape_NHWC(raw_data.get_data(), False)
+        else:
+            data = raw_data.get_data()
 
         # Return the data
-        return np.squeeze(data)
-
+        return data
 
     def load_MHA(self, path):
 
@@ -996,7 +637,6 @@ class SODLoader():
 
         return ndimage, numpyOrigin, numpySpacing
 
-
     def load_image(self, path, grayscale=True):
         """
         Loads an image from a jpeg or other type of image file into a numpy array
@@ -1014,7 +654,6 @@ class SODLoader():
             image = mpimg.imread(path)
 
         return image
-
 
     def load_HA_labels(self, filename):
 
@@ -1040,7 +679,6 @@ class SODLoader():
         patient = os.path.split(dirname)[-1]
 
         return label, id, patient
-
 
     def load_sachin_labels(self, filename):
 
@@ -1070,7 +708,6 @@ class SODLoader():
 
         return patient, label, id, phase
 
-
     def load_HIRAM_labels(self, filename):
         """
         To retreive the labels and patient ID using Dr. Ha's naming convention
@@ -1088,7 +725,6 @@ class SODLoader():
 
         return pt, study, ln
 
-
     def randomize_batches(self, image_dict, batch_size, dynamic=False):
         """
         This function takes our full data tensors and creates shuffled batches of data.
@@ -1102,8 +738,10 @@ class SODLoader():
         keys, tensors = zip(*image_dict.items())  # Create zip object
 
         # This function creates batches by randomly shuffling the input tensors. returns a dict of shuffled tensors
-        if dynamic: shuffled = tf.train.batch(tensors, batch_size=batch_size, capacity=capacity, dynamic_pad=True)
-        else: shuffled = tf.train.shuffle_batch(tensors, batch_size=batch_size, capacity=capacity, min_after_dequeue=min_dq)
+        if dynamic:
+            shuffled = tf.train.batch(tensors, batch_size=batch_size, capacity=capacity, dynamic_pad=True)
+        else:
+            shuffled = tf.train.shuffle_batch(tensors, batch_size=batch_size, capacity=capacity, min_after_dequeue=min_dq)
 
         # Dictionary to store our shuffled examples
         batch_dict = {}
@@ -1112,7 +750,6 @@ class SODLoader():
         for key, shuffle in zip(keys, shuffled): batch_dict[key] = shuffle
 
         return batch_dict
-
 
     def val_batches(self, image_dict, batch_size):
 
@@ -1137,7 +774,6 @@ class SODLoader():
 
         return batch_dict
 
-
     def save_image(self, image, path, format=None, type=None):
 
         """
@@ -1150,75 +786,6 @@ class SODLoader():
 
         # Way more powerful than this but we will go on a PRN basis
         imageio.imwrite(path, image, format=format)
-
-
-    def save_gif_volume(self, volume, path, fps=None, scale=0.8, swapaxes=False):
-
-        """
-        Saves the input volume to a .gif file
-        """
-
-        # Swapaxes, used if this is a nifti source
-        if swapaxes: volume = np.swapaxes(volume, 1, 2)
-
-        try: volume_norm = self.adaptive_normalization(volume, True)
-        except: volume_norm = volume
-        volume_norm = cv2.convertScaleAbs(volume_norm, alpha=(255.0 / volume_norm.max()))
-
-        # Save the .gif set FPS to volume depended
-        if not fps: fps = volume_norm.shape[0] // 5
-        self.gif(path, volume_norm, fps=fps, scale=scale)
-
-
-    def gif(self, filename, array, fps=10, scale=1.0):
-        """Creates a gif given a stack of images using moviepy
-        Notes
-        -----
-        works with current Github version of moviepy (not the pip version)
-        https://github.com/Zulko/moviepy/commit/d4c9c37bc88261d8ed8b5d9b7c317d13b2cdf62e
-        Usage
-        -----
-        >>> X = randn(100, 64, 64)
-        >>> gif('test.gif', X)
-        Parameters
-        ----------
-        filename : string
-            The filename of the gif to write to
-        array : array_like
-            A numpy array that contains a sequence of images
-        fps : int
-            frames per second (default: 10)
-        scale : float
-            how much to rescale each image by (default: 1.0)
-        """
-
-        # ensure that the file has the .gif extension
-        fname, _ = os.path.splitext(filename)
-        filename = fname + '.gif'
-
-        # copy into the color dimension if the images are black and white
-        if array.ndim == 3:
-            array = array[..., np.newaxis] * np.ones(3)
-
-        # make the moviepy clip
-        clip = ImageSequenceClip(list(array), fps=fps).resize(scale)
-        clip.write_gif(filename, fps=fps)
-        return clip
-
-
-    def save_volume(self, volume, path, header=False, overwrite=True, compress=False):
-        """
-        Saves a volume into nii. nii.gz, .dcm, .dicom, .nrrd, .mhd and others
-        :param volume: 3d numpy array
-        :param path: save path
-        :param header: The header information with metadata
-        :param overwrite: Overwrite existing
-        :param compress: compress the image (if supported)
-        :return:
-        """
-
-        mpsave(volume, path, header, overwrite, compress)
-
 
     def RCNN_extract_box_labels(self, mask, dim_3d=False):
 
@@ -1237,7 +804,7 @@ class SODLoader():
             # Make dummy array with diff boxes for each channel
             boxes = np.zeros([mask.shape[0], mask.shape[-1], 4], dtype=np.int32)
 
-            for a in range (mask.shape[0]):
+            for a in range(mask.shape[0]):
 
                 # Loop through all the classes (channels)
                 for z in range(mask[a].shape[-1]):
@@ -1277,7 +844,7 @@ class SODLoader():
             boxes = np.zeros([mask.shape[-1], 4], dtype=np.int32)
 
             # Loop through all the classes (channels)
-            for z in range (mask.shape[-1]):
+            for z in range(mask.shape[-1]):
 
                 # Work on just this class of pixel
                 m = mask[:, :, z]
@@ -1304,7 +871,6 @@ class SODLoader():
                 boxes[z] = np.array([y1, x1, y2, x2])
 
             return boxes.astype(np.int32)
-
 
     def resize_3D_by_axis(self, image, dim_1, dim_2, axis_to_hold, is_grayscale):
 
@@ -1337,7 +903,6 @@ class SODLoader():
 
         return stack_img
 
-
     def tf_resize_3D(self, image, z_dim, x_dim, y_dim, is_grayscale):
 
         """
@@ -1350,11 +915,10 @@ class SODLoader():
         :return:
         """
 
-        resized_along_depth = self.resize_3D_by_axis(image, y_dim, z_dim, 2, is_grayscale)
-        resized_along_width = self.resize_3D_by_axis(resized_along_depth, y_dim, x_dim, 1, is_grayscale)
+        resized_along_depth = self.resize_by_axis(image, y_dim, z_dim, 2, is_grayscale)
+        resized_along_width = self.resize_by_axis(resized_along_depth, y_dim, x_dim, 1, is_grayscale)
 
-        return tf.transpose(resized_along_width, perm=[1, 0, 2])
-
+        return resized_along_width
 
     """
              Pre processing functions.
@@ -1377,8 +941,7 @@ class SODLoader():
 
         return voxelCoord
 
-
-    def create_MRI_breast_mask(self, image, threshold=15, size_denominator=45):
+    def create_breast_mask(self, image, threshold=15, size_denominator=45):
         """
         Creates a rough mask of breast tissue returned as 1 = breast 0 = nothing
         :param image: the input volume (3D numpy array)
@@ -1388,43 +951,38 @@ class SODLoader():
         """
 
         # Create the mask
-        mask2 = np.copy(np.squeeze(image))
-        mask1 = np.zeros_like(image, np.int16)
+        mask = np.copy(image)
 
         # Loop through the image volume
         for k in range(0, image.shape[0]):
-
             # Apply gaussian blur to smooth the image
-            mask2[k] = cv2.GaussianBlur(mask2[k], (5, 5), 0)
+            mask[k] = cv2.GaussianBlur(mask[k], (5, 5), 0)
             # mask[k] = cv2.bilateralFilter(mask[k].astype(np.float32),9,75,75)
 
-            # Threshold the image. Change to the bool
-            mask1[k] = np.squeeze(mask2[k] < threshold).astype(np.int16)
+            # Threshold the image
+            mask[k] = np.squeeze(mask[k] < threshold)
 
             # Define the CV2 structuring element
-            radius_close = np.round(mask1.shape[1] / size_denominator).astype('int16')
+            radius_close = np.round(mask.shape[1] / size_denominator).astype('int16')
             kernel_close = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(radius_close, radius_close))
 
             # Apply morph close
-            mask1[k] = cv2.morphologyEx(mask1[k], cv2.MORPH_CLOSE, kernel_close)
+            mask[k] = cv2.morphologyEx(mask[k], cv2.MORPH_CLOSE, kernel_close)
 
             # Invert mask
-            mask1[k] = ~mask1[k]
+            mask[k] = ~mask[k]
 
             # Add 2
-            mask1[k] += 2
+            mask[k] += 2
 
-        return mask1
+        return mask
 
-
-    def create_mammo_mask(self, image, threshold=800, check_mask=False):
+    def create_mammo_mask(self, image, threshold=800):
 
         """
 
         :param image: input mammogram
         :param threshold: Pixel value to use for threshold
-        :param check_mask: Check mask to make sure it's not fraudulent, i.e. covers > 80% or <10% of the image
-            if it is, then use the other mask function
         :return:
         """
 
@@ -1449,155 +1007,17 @@ class SODLoader():
         # Just use morphological closing
         mask = cv2.morphologyEx(mask.astype(np.int16), cv2.MORPH_CLOSE, kernel_close)
 
-        if check_mask:
-
-            # Check if mask is too much or too little
-            mask_idx = np.sum(mask) / (image.shape[0] * image.shape[1])
-
-            # If it is, try again
-            if mask_idx > 0.8 or mask_idx < 0.1:
-
-                print('Mask Failed... using method 2')
-                del mask
-                mask, _ = self.create_breast_mask2(image)
-
-
         return mask
 
-
-    def create_breast_mask2(self, im, scale_factor=0.25, threshold=3900, felzenzwalb_scale=0.15):
-
+    def create_lung_mask(self, image, radius_erode=2):
         """
-        Fully automated breast segmentation in mammographies.
-        https://github.com/olieidel/breast_segment
-        :param im: Image
-        :param scale_factor: Scale Factor
-        :param threshold: Threshold
-        :param felzenzwalb_scale: Felzenzwalb Scale
-        :return: (im_mask, bbox) where im_mask is the segmentation mask and
-        bbox is the bounding box (rectangular) of the segmentation.
-        """
-
-        # set threshold to remove artifacts around edges
-        im_thres = im.copy()
-        im_thres[im_thres > threshold] = 0
-
-        # determine breast side
-        col_sums_split = np.array_split(np.sum(im_thres, axis=0), 2)
-        left_col_sum = np.sum(col_sums_split[0])
-        right_col_sum = np.sum(col_sums_split[1])
-
-        if left_col_sum > right_col_sum:
-            breast_side = 'l'
-        else:
-            breast_side = 'r'
-
-        # rescale and filter aggressively, normalize
-        im_small = rescale(im_thres, scale_factor)
-        im_small_filt = median(im_small, disk(50))
-        # this might not be helping, actually sometimes it is
-        im_small_filt = hist.equalize_hist(im_small_filt)
-
-        # run mr. felzenzwalb
-        segments = felzenszwalb(im_small_filt, scale=felzenzwalb_scale)
-        segments += 1  # otherwise, labels() would ignore segment with segment=0
-
-        props = regionprops(segments)
-
-        # Sort Props by area, descending
-        props_sorted = sorted(props, key=lambda x: x.area, reverse=True)
-
-        expected_bg_index = 0
-        bg_index = expected_bg_index
-
-        bg_region = props_sorted[bg_index]
-        minr, minc, maxr, maxc = bg_region.bbox
-        filled_mask = bg_region.filled_image
-
-        im_small_fill = np.zeros((im_small_filt.shape[0] + 2, im_small_filt.shape[1] + 1), dtype=int)
-
-        if breast_side == 'l':
-            # breast expected to be on left side,
-            # pad on right and bottom side
-            im_small_fill[minr + 1:maxr + 1, minc:maxc] = filled_mask
-            im_small_fill[0, :] = 1  # top
-            im_small_fill[-1, :] = 1  # bottom
-            im_small_fill[:, -1] = 1  # right
-        elif breast_side == 'r':
-            # breast expected to be on right side,
-            # pad on left and bottom side
-            im_small_fill[minr + 1:maxr + 1, minc + 1:maxc + 1] = filled_mask  # shift mask to right side
-            im_small_fill[0, :] = 1  # top
-            im_small_fill[-1, :] = 1  # bottom
-            im_small_fill[:, 0] = 1  # left
-
-        im_small_fill = binary_fill_holes(im_small_fill)
-
-        im_small_mask = im_small_fill[1:-1, :-1] if breast_side == 'l' \
-            else im_small_fill[1:-1, 1:]
-
-        # rescale mask
-        im_mask = self.zoom_2D(im_small_mask.astype(np.float32), [im.shape[1], im.shape[0]]).astype(bool)
-
-        # invert!
-        im_mask = ~im_mask
-
-        # determine side of breast in mask and compare
-        col_sums_split = np.array_split(np.sum(im_mask, axis=0), 2)
-        left_col_sum = np.sum(col_sums_split[0])
-        right_col_sum = np.sum(col_sums_split[1])
-
-        if left_col_sum > right_col_sum:
-            breast_side_mask = 'l'
-        else:
-            breast_side_mask = 'r'
-
-        if breast_side_mask != breast_side:
-            # breast mask is not on expected side
-            # we might have segmented bg instead of breast
-            # so invert again
-            print('breast and mask side mismatch. inverting!')
-            im_mask = ~im_mask
-
-        # exclude thresholded area (artifacts) in mask, too
-        im_mask[im > threshold] = False
-
-        # fill holes again, just in case there was a high-intensity region
-        # in the breast
-        im_mask = binary_fill_holes(im_mask)
-
-        # if no region found, abort early and return mask of complete image
-        if im_mask.ravel().sum() == 0:
-            all_mask = np.ones_like(im).astype(bool)
-            bbox = (0, 0, im.shape[0], im.shape[1])
-            print('Couldn\'t find any segment')
-            return all_mask, bbox
-
-        # get bbox
-        minr = np.argwhere(im_mask.any(axis=1)).ravel()[0]
-        maxr = np.argwhere(im_mask.any(axis=1)).ravel()[-1]
-        minc = np.argwhere(im_mask.any(axis=0)).ravel()[0]
-        maxc = np.argwhere(im_mask.any(axis=0)).ravel()[-1]
-
-        bbox = (minr, minc, maxr, maxc)
-
-        return im_mask, bbox
-
-
-    def create_lung_mask(self, image, radius_erode=2, close=12, dilate=12):
-        """
-        Creates a binary lung mask, 1 = lung, 0 = not lung
-        :param image: input lung CT
-        :param radius_erode:
-        :param close: a lower number closes more
-        :param dilate: a lower number dilates more
-        :return:
+        Method to create lung mask.
         """
 
         # Define the radius of the structuring elements
         height = image.shape[1]  # Holder for the variable
-        radius_close = np.round(height / close).astype('int16')
-        radius_dilate = np.round(height / dilate).astype('int16')
+        radius_close = np.round(height / 12).astype('int16')
+        radius_dilate = np.round(height / 12).astype('int16')
 
         # Create the structuring elements
         kernel_erode = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(radius_erode, radius_erode))
@@ -1652,7 +1072,6 @@ class SODLoader():
 
         return mask
 
-
     def create_bone_mask(self, image, seed):
         """
         Creates a bone mask
@@ -1691,7 +1110,6 @@ class SODLoader():
         # Return the inverted masks
         return image
 
-
     def create_table_mask(self, image, factor=30):
         """
         Creates a mask of the table in scans
@@ -1717,7 +1135,6 @@ class SODLoader():
         # Return the inverted masks
         return ~mask
 
-
     def create_MIP_2D(self, vol, slice, thickness=5.0, slice_spacing=1.0):
         """
         This function creates a MIP of one given input slice of the given thickness
@@ -1739,7 +1156,6 @@ class SODLoader():
 
         return MIP
 
-
     def create_volume_MIP(self, volume, slice_spacing=1.0, thickness=5.0):
 
         """
@@ -1758,7 +1174,6 @@ class SODLoader():
             mip[z] = np.amax(volume[z - r:z + r], axis=0)
 
         return mip
-
 
     def create_2D_label(self, input, coords, diameter):
         """
@@ -1787,7 +1202,6 @@ class SODLoader():
         label_2d = cv2.dilate(src=label_3d[z, :, :].astype('uint8'), kernel=kernel_dilate, iterations=1)
 
         return label_2d
-
 
     def create_3D_label(self, lung_mask, coords, diameter, spacing):
         """
@@ -1825,7 +1239,6 @@ class SODLoader():
 
         return lung_mask
 
-
     def resample(self, image, spacing, new_spacing=[1, 1, 1]):
         """
         This function resamples the input volume into an isotropic resolution
@@ -1845,11 +1258,10 @@ class SODLoader():
 
         return image, new_spacing
 
-
     def resize_volume(self, image, dtype, x=256, y=256, z=None, c=None):
 
         """
-        Resize a volume to the new size using open CV
+        Resize a volume to the new size
         :param image: input image array
         :param dtype: the data type of the input
         :param x: new x dimensino
@@ -1860,7 +1272,7 @@ class SODLoader():
         """
 
         # Resize the array
-        if not z: z=image.shape[0]
+        if not z: z = image.shape[0]
 
         if not c:
             resize = np.zeros((z, x, y), dtype)
@@ -1872,7 +1284,6 @@ class SODLoader():
 
         # Return
         return resize
-
 
     def zoom_3D(self, volume, factor):
         """
@@ -1887,9 +1298,10 @@ class SODLoader():
         resize_factor_depth = [factor[0] * volume.shape[0], factor[1] * volume.shape[1], factor[2] * volume.shape[2], 1]
 
         # Perform the zoom
-        try: return scipy.interpolation.zoom(volume, resize_factor, mode='nearest')
-        except: return scipy.interpolation.zoom(volume, resize_factor_depth, mode='nearest')
-
+        try:
+            return scipy.interpolation.zoom(volume, resize_factor, mode='nearest')
+        except:
+            return scipy.interpolation.zoom(volume, resize_factor_depth, mode='nearest')
 
     def zoom_2D(self, image, new_shape):
         """
@@ -1898,14 +1310,13 @@ class SODLoader():
         :param new_shape: New shape, tuple or array
         :return: the resized image
         """
-        return cv2.resize(image,(new_shape[0], new_shape[1]), interpolation = cv2.INTER_CUBIC)
-
+        return cv2.resize(image, (new_shape[0], new_shape[1]), interpolation=cv2.INTER_CUBIC)
 
     def fast_3d_affine(self, image, center, angle_range, shear_range=None):
         """
         Performs a 3D affine rotation and/or shear using OpenCV
         :param image: The image volume
-        :param center: array: the center of rotation in z,y,x
+        :param center: array: the center of rotation (make this the nodule center) in z,y,x
         :param angle_range: array: range of angles about x, y and z
         :param shear_range: float array: the range of values to shear if you want to shear
         :return:
@@ -1913,8 +1324,10 @@ class SODLoader():
 
         # The image is sent in Z,Y,X format
         C = None
-        try: Z, Y, X = image.shape
-        except: Z, Y, X, C = image.shape
+        try:
+            Z, Y, X = image.shape
+        except:
+            Z, Y, X, C = image.shape
 
         # OpenCV makes interpolated pixels equal 0. Add the minumum value to subtract it later
         img_min = abs(image.min())
@@ -1945,9 +1358,9 @@ class SODLoader():
         # Shear defined, repeat everything for shearing
 
         # Define the affine shear positions
-        sx = random.uniform(0-shear_range[2], 0+shear_range[2])
-        sy = random.uniform(0-shear_range[1], 0+shear_range[1])
-        sz = random.uniform(0-shear_range[0], 0+shear_range[0])
+        sx = random.uniform(0 - shear_range[2], 0 + shear_range[2])
+        sy = random.uniform(0 - shear_range[1], 0 + shear_range[1])
+        sz = random.uniform(0 - shear_range[0], 0 + shear_range[0])
 
         # First define 3 random points
         pts1 = np.float32([[X / 2, Z / 2], [X / 2, Z / 3], [X / 3, Z / 2]])
@@ -1979,56 +1392,6 @@ class SODLoader():
         del pts1
 
         return np.subtract(image, img_min), [anglex, angley, anglez], [sx, sy, sz]
-
-
-    def transform_volume_3d(self, image, angles, shift_range=None, center=None, radians=False):
-
-        """
-        Performs a 3D affine rotation and/or shift using OpenCV
-        :param image: The image volume
-        :param center: array: the center of rotation in z,y,x
-        :param angles: array: angle about x, y and z in degrees
-        :param shift_range: for translating
-        :param radians: if the angle is in radians or not
-        :return:
-        """
-
-        if radians: angles = [math.degrees(x) for x in angles]
-
-        # Get center if not given
-        if not center: center = [x//2 for x in image.shape]
-
-        # The image is sent in Z,Y,X format
-        C = None
-        try: Z, Y, X = image.shape
-        except: Z, Y, X, C = image.shape
-
-        # OpenCV makes interpolated pixels equal 0. Add the minumum value to subtract it later
-        img_min = abs(image.min())
-        image = np.add(image, img_min)
-
-        # Define the affine angles of rotation
-        anglex = angles[2]
-        angley = angles[1]
-        anglez = angles[0]
-
-        # Matrix to rotate along Coronal plane (Y columns, Z rows)
-        M = cv2.getRotationMatrix2D((center[1], center[0]), anglex, 1)
-
-        # Apply the Coronal transform slice by slice along X
-        for i in range(0, X): image[:, :, i] = cv2.warpAffine(image[:, :, i], M, (Y, Z))
-
-        # Matrix to rotate along saggital plane (Z and X) and apply
-        M = cv2.getRotationMatrix2D((center[2], center[0]), angley, 1)
-        for i in range(0, Y): image[:, i, :] = cv2.warpAffine(image[:, i, :], M, (X, Z))
-
-        # Matrix to rotate along Axial plane (X and Y)
-        M = cv2.getRotationMatrix2D((center[1], center[2]), anglez, 1)
-        for i in range(0, Z): image[i, :, :] = cv2.warpAffine(image[i, :, :], M, (X, Y))
-
-        # Done with rotation, return if shear is not defined
-        if shift_range == None: return np.subtract(image, img_min)
-
 
     def fast_2d_affine(self, image, center, angle_range, shear_range=None):
         """
@@ -2062,8 +1425,8 @@ class SODLoader():
         # Shear defined, repeat everything for shearing
 
         # Define the affine shear positions
-        sx = random.uniform(0-shear_range[1], 0+shear_range[1])
-        sy = random.uniform(0-shear_range[0], 0+shear_range[0])
+        sx = random.uniform(0 - shear_range[1], 0 + shear_range[1])
+        sy = random.uniform(0 - shear_range[0], 0 + shear_range[0])
 
         # First define 3 random points
         pts1 = np.float32([[Y / 2, X / 2], [Y / 2, X / 3], [Y / 3, X / 2]])
@@ -2078,7 +1441,6 @@ class SODLoader():
         image = cv2.warpAffine(image, M, (Y, X))
 
         return np.subtract(image, img_min), angle, [sy, sx]
-
 
     def calc_fast_affine(self, center=[], angle_range=[], dim_3d=True):
 
@@ -2114,7 +1476,6 @@ class SODLoader():
 
             return [Mx, My, Mz]
 
-
     def perform_fast_affine(self, image, M=[], dim_3d=True):
 
         """
@@ -2126,8 +1487,10 @@ class SODLoader():
         """
 
         # The image is sent in Z,Y,X format
-        if dim_3d: Z, Y, X = image.shape
-        else: Y, X = image.shape
+        if dim_3d:
+            Z, Y, X = image.shape
+        else:
+            Y, X = image.shape
 
         # OpenCV makes interpolated pixels equal 0. Add the minumum value to subtract it later
         img_min = abs(image.min())
@@ -2139,11 +1502,11 @@ class SODLoader():
             for i in range(0, Y): image[:, i, :] = cv2.warpAffine(image[:, i, :], M[1], (X, Z))
             for i in range(0, Z): image[i, :, :] = cv2.warpAffine(image[i, :, :], M[2], (Y, X))
 
-        else: image = cv2.warpAffine(image, M, (Y, X))
+        else:
+            image = cv2.warpAffine(image, M, (Y, X))
 
         # Return the array with normal houndsfield distribution
         return np.subtract(image, img_min)
-
 
     def affine_transform_data(self, data, tform, data_key=1):
         """
@@ -2187,7 +1550,6 @@ class SODLoader():
         # Return the data
         return data
 
-
     def generate_box(self, image, origin=[], size=32, display=False, dim3d=True, z_overwrite=None):
         """
         This function returns a cube from the source image
@@ -2200,12 +1562,12 @@ class SODLoader():
         """
 
         # Sometimes size is an array
-        try:
-            sizey = int(size[0])
-            sizex = int(size[1])
-        except:
+        if isinstance(size, int):
             sizey = size
             sizex = size
+        else:
+            sizey = int(size[0])
+            sizex = int(size[1])
 
         # First implement the 2D version
         if not dim3d:
@@ -2234,13 +1596,15 @@ class SODLoader():
             return box, new_center
 
         # first scale the z axis in half
-        if z_overwrite: sizez = z_overwrite
-        else: sizez = int(size/2)
+        if z_overwrite:
+            sizez = z_overwrite
+        else:
+            sizez = int(size / 2)
 
         # Make the starting point = center-size unless near the edge then make it 0
-        startx = max(origin[2] - size/2, 0)
-        starty = max(origin[1] - size/2, 0)
-        startz = max(origin[0] - sizez/2, 0)
+        startx = max(origin[2] - size / 2, 0)
+        starty = max(origin[1] - size / 2, 0)
+        startz = max(origin[0] - sizez / 2, 0)
 
         # If near the far edge, make it fit inside the image
         if (startx + size) > image.shape[2]:
@@ -2259,7 +1623,7 @@ class SODLoader():
         box = image[startz:startz + sizez, starty:starty + size, startx:startx + size]
 
         # If boxes had to be shifted, we have to calculate a new 'center' of the nodule in the box
-        new_center = [int(sizez/ 2 - ((startz + sizez/ 2) - origin[0])),
+        new_center = [int(sizez / 2 - ((startz + sizez / 2) - origin[0])),
                       int(size / 2 - ((starty + size / 2) - origin[1])),
                       int(size / 2 - ((startx + size / 2) - origin[2]))]
 
@@ -2267,7 +1631,6 @@ class SODLoader():
         if display: print(image.shape, startz, starty, startx, box.shape, 'New Center:', new_center)
 
         return box, new_center
-
 
     def generate_DRR(self, volume_data, vert_scale=1.0, horiz_scale=1.0, source_distance=39.37, cone=True):
 
@@ -2292,8 +1655,10 @@ class SODLoader():
         angles = np.linspace(0, 2 * np.pi, 48, False)  # Don't use angles for now, just affine warps
 
         # Create a 3D beam geometry
-        if cone: proj_geom = astra.create_proj_geom('cone', vert_scale, horiz_scale, Z, X, 0, source, 0)
-        else: proj_geom = astra.create_proj_geom('parallel3d', vert_scale, horiz_scale, Z, X, 0)
+        if cone:
+            proj_geom = astra.create_proj_geom('cone', vert_scale, horiz_scale, Z, X, 0, source, 0)
+        else:
+            proj_geom = astra.create_proj_geom('parallel3d', vert_scale, horiz_scale, Z, X, 0)
 
         # Create the projections
         proj_id, proj_data = astra.create_sino3d_gpu(volume_data, proj_geom, vol_geom)
@@ -2305,105 +1670,9 @@ class SODLoader():
         # Return the projection
         return np.squeeze(proj_data)
 
-
-    def crop_data(self, data, origin, boundaries):
-
-        """
-        Crops a given array
-        :param data: Input volume, numpy array
-        :param origin: Center of the crop, tuple
-        :param boundaries: z, y, x width of the crop, tuple
-        :return: The cropped volume
-        """
-
-        # Convert to numpy
-        data = np.squeeze(data)
-        og = np.asarray(origin)
-        bn = np.asarray(boundaries)
-
-        # Is this 3D or 2D
-        if data.ndim >= 3:
-            is_3d = True
-        else:
-            is_3d = False
-
-        # Now perform the cut
-        if is_3d:
-            return data[og[0] - bn[0]:og[0] + bn[0], og[1] - bn[1]:og[1] + bn[1], og[2] - bn[2]:og[2] + bn[2], ...], og, bn
-        else:
-            return data[og[0] - bn[0]:og[0] + bn[0], og[1] - bn[1]:og[1] + bn[1]], og, bn
-
-
-    def is_odd(self, num):
-
-        """
-        Check if num is odd
-        :param num:
-        :return:
-        """
-        return num & 0x1
-
-
-    def pad_resize(self, input, out_size, pad_value='constant'):
-
-        """
-        Pads an input array to the output size with pad_value.
-        :param input: The input array
-        :param out_size: The desired output size [z, y, x], Must be bigger than input array
-        :param pad_mode: string, Pad with this mode, 'constant', edge, max, mean, etc
-        :return: the new padded array
-        """
-
-        # Convert arrays
-        input = np.squeeze(input)
-        out_size = np.asarray(out_size)
-
-        # Is this 3D or 2D
-        if input.ndim >= 3:
-            is_3d = True
-        else:
-            is_3d = False
-
-        if is_3d:
-
-            # Calculate how much to pad on each axis
-            xpad = xpad2 = (out_size[2] - input.shape[2]) // 2
-            ypad = ypad2 = (out_size[1] - input.shape[1]) // 2
-            zpad = zpad2 = (out_size[0] - input.shape[0]) // 2
-
-            # Handle odd numbers: 5//2 = 2
-            if self.is_odd(out_size[0]) != self.is_odd(input.shape[0]):
-                zpad2 = 1 + (out_size[0] - input.shape[0]) // 2
-
-            if self.is_odd(out_size[1]) != self.is_odd(input.shape[1]):
-                ypad2 = 1 + (out_size[1] - input.shape[1]) // 2
-
-            if self.is_odd(out_size[2]) != self.is_odd(input.shape[2]):
-                xpad2 = 1 + (out_size[2] - input.shape[2]) // 2
-
-            # Perform the pad
-            return np.pad(input, ((zpad, zpad2), (ypad, ypad2), (xpad, xpad2)), pad_value)
-
-        else:
-
-            # Calculate how much to pad on each axis
-            xpad = xpad2 = (out_size[1] - input.shape[1]) // 2
-            ypad = ypad2 = (out_size[0] - input.shape[0]) // 2
-
-            # Handle odd numbers: 5//2 = 2
-            if self.is_odd(out_size[0]) != self.is_odd(input.shape[0]):
-                ypad2 = 1 + (out_size[0] - input.shape[0]) // 2
-
-            if self.is_odd(out_size[1]) != self.is_odd(input.shape[1]):
-                xpad2 = 1 + (out_size[1] - input.shape[1]) // 2
-
-            # Perform the pad
-            return np.pad(input, ((ypad, ypad2), (xpad, xpad2)), pad_value)
-
     """
          Utility functions: Random tools for help
     """
-
 
     def split_dict_equally(self, input_dict, chunks=2):
 
@@ -2430,7 +1699,6 @@ class SODLoader():
 
         return return_list
 
-
     def largest_blob(self, img):
         """
         This finds the biggest blob in a 2D or 3D volume and returns the center of the blob
@@ -2453,15 +1721,16 @@ class SODLoader():
             # Find the center of mass
             cn = scipy.measurements.center_of_mass(labels)
 
-            if labels.ndim == 3: cn = [int(cn[0]), int(cn[1]), int(cn[2])]
-            else: cn = [int(cn[0]), int(cn[1])]
+            if labels.ndim == 3:
+                cn = [int(cn[0]), int(cn[1]), int(cn[2])]
+            else:
+                cn = [int(cn[0]), int(cn[1])]
 
             # Return the parts of the label equal to the 2nd biggest blob
-            return labels, np.asarray(cn, np.int32)
+            return labels, cn
 
         else:
-            return img, img.shape//2
-
+            return img
 
     def all_blobs(self, img):
 
@@ -2490,14 +1759,16 @@ class SODLoader():
             for z in range(blob_count):
 
                 # Mark the blob for this pixel value (+1 from array index)
-                label_temp = (labels == (z+1))
+                label_temp = (labels == (z + 1))
 
                 # Find the center of mass
                 cn = scipy.measurements.center_of_mass(label_temp)
 
                 # Generate center based on 2D or 3D
-                if labels.ndim == 3: cn = [int(cn[0]), int(cn[1]), int(cn[2])]
-                else: cn = [int(cn[0]), int(cn[1])]
+                if labels.ndim == 3:
+                    cn = [int(cn[0]), int(cn[1]), int(cn[2])]
+                else:
+                    cn = [int(cn[0]), int(cn[1])]
 
                 # Append
                 centers.append(cn)
@@ -2511,7 +1782,6 @@ class SODLoader():
         else:
             return img
 
-
     def normalize(self, input, crop=False, crop_val=0.5):
         """
         Normalizes the given np array
@@ -2524,7 +1794,7 @@ class SODLoader():
         if crop:
 
             ## CLIP top and bottom x values and scale rest of slice accordingly
-            b, t = np.percentile(input, (crop_val, 100-crop_val))
+            b, t = np.percentile(input, (crop_val, 100 - crop_val))
             slice = np.clip(input, b, t)
             if np.std(slice) == 0:
                 return slice
@@ -2533,9 +1803,7 @@ class SODLoader():
 
         return (input - np.mean(input)) / np.std(input)
 
-
     def normalize_MRI_histogram(self, image, return_values=False, center_type='mean'):
-
         """
         Uses histogram normalization to normalize MRI data by removing 0 values
         :param image: input volume numpy array
@@ -2563,54 +1831,65 @@ class SODLoader():
         std, mean = np.std(dummy), np.mean(dummy)
 
         # Now divide the image by the modified STD
-        if center_type=='mode': image = image.astype(np.float32) - mode
-        else: image = image.astype(np.float32) - mean
+        if center_type == 'mode':
+            image = image.astype(np.float32) - mode
+        else:
+            image = image.astype(np.float32) - mean
         image /= std
 
         # Return values or just volume
-        if return_values: return image, mean, std, mode
-        else: return image
+        if return_values:
+            return image, mean, std, mode
+        else:
+            return image
 
-
-    def adaptive_normalization(self, tensor, dim3d=False):
+    def normalize_Mammo_histogram(self, image, return_values=False, center_type='mean'):
 
         """
-        Contrast localized adaptive histogram normalization
-        :param tensor: ndarray, 2d or 3d
-        :param dim3d: 2D or 3d. If 2d use Scikit, if 3D use the MCLAHe implementation
-        :return: normalized image
-        """
-
-        if dim3d: return mc.mclahe(tensor)
-        else: return hist.equalize_adapthist(tensor)
-
-
-    def normalize_dynamic_range (self, volume, low=0, high=255, mask=None, dtype=np.uint8, dim3d=True):
-        """
-        Takes an input and stretches the pixel values over the given dynamic range
-        :param volume: input volume, numpy array
-        :param low: low range
-        :param high: high range
-        :param mask: If mask defined, only normalize the values in mask
-        :param dtype: output data type desired
-        :param dim3d: True for 3d volumes
+        Uses histogram normalization to normalize mammography data by removing 0 values
+        :param image: input volume numpy array
+        :param return_values: Whether to return the mean, std and mode values as well
+        :param center_type: What to center the data with, 'mean' or 'mode'
         :return:
         """
 
-        # Normalize the volume into 0-255 range for .gif file
-        volume_norm = np.zeros_like(volume, dtype=dtype)
+        # First save a copy of the real image
+        img = np.copy(image)
 
-        # For volumes
-        if dim3d:
-            for z in range(volume.shape[0]):
-                volume_norm[z] = cv2.normalize(volume[z], dst=volume_norm[z], alpha=low, beta=high, mask=mask, norm_type=cv2.NORM_MINMAX)
+        # First generate a mammo mask then apply it
+        mask = self.create_mammo_mask(image)
+        image *= mask.astype(image.dtype)
 
-        # For 2d images
+        # First calculate the most commonly occuring values in the volume
+        occurences, values = np.histogram(image, bins=500)
+
+        # Remove 0 values (AIR) which always win
+        occurences, values = occurences[1:], values[1:]
+
+        # The mode is the value array at the index of highest occurence
+        mode = values[np.argmax(occurences)]
+
+        # Make dummy no zero image array to calculate STD
+        dummy, img_temp = [], np.copy(image).flatten()
+        for z in range(len(img_temp)):
+            if img_temp[z] > 5: dummy.append(img_temp[z])
+
+        # Mean/std is calculated from nonzero values only
+        dummy = np.asarray(dummy, np.float32)
+        std, mean = np.std(dummy), np.mean(dummy)
+
+        # Now divide the image by the modified STD
+        if center_type == 'mode':
+            img = img.astype(np.float32) - mode
         else:
-            volume_norm = cv2.normalize(volume, dst=volume_norm, alpha=low, beta=high, mask=mask, norm_type=cv2.NORM_MINMAX)
+            img = img.astype(np.float32) - mean
+        img /= std
 
-        return volume_norm
-
+        # Return values or just volume
+        if return_values:
+            return img, mean, std, mode
+        else:
+            return img
 
     def reshape_NHWC(self, vol, NHWC):
         """
@@ -2621,7 +1900,6 @@ class SODLoader():
 
         # If this is a 2D image
         if len(vol.shape) == 2:
-
             # Create an extra channel at the beginning
             vol = np.expand_dims(vol, axis=0)
 
@@ -2630,29 +1908,22 @@ class SODLoader():
 
             # If there is no channel dimension (i.e. grayscale)
             if not NHWC:
-
                 # Move the last axis (Z) to the first axis
                 vol = np.moveaxis(vol, -1, 0)
 
             # Create another axis at the end for channel
             vol = np.expand_dims(vol, axis=3)
 
-
         return vol
 
-
-    def gray2rgb(self, img, RGB=True):
+    def gray2rgb(self, img):
 
         """
         Use open CV to convert HxW grayscale image to HxWxC RGB image
         :param img: The input image as numpy array
-        :param RGB: True = RGB, False = BGR
         :return: the converted image
         """
-
-        if RGB: return cv2.cvtColor(img,cv2.COLOR_GRAY2RGB)
-        else: return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
+        return cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
 
     def random_3daffine(self, angle=45):
         """
@@ -2692,7 +1963,6 @@ class SODLoader():
 
         return tx, ty, tz, anglex, angley, anglez
 
-
     def retreive_filelist(self, extension, include_subfolders=False, path=None):
         """
         Returns a list with all the files of a certain type in path
@@ -2709,17 +1979,18 @@ class SODLoader():
         if extension == '*': return glob.glob(path + '*')
 
         # If we're including subfolders
-        if include_subfolders: extension = ('**/*.%s' % extension)
+        if include_subfolders:
+            extension = ('**/*.%s' % extension)
 
         # Otherwise just search this folder
-        else: extension = ('*.%s' %extension)
+        else:
+            extension = ('*.%s' % extension)
 
         # Join the pathnames
         path = os.path.join(path, extension)
 
         # Return the list of filenames
         return glob.glob(path, recursive=include_subfolders)
-
 
     def window_image(self, volume, level, width):
         """
@@ -2743,7 +2014,6 @@ class SODLoader():
         # Return the windowed image
         return volume
 
-
     def normalize_dictionary(self, data, dims, channels=0, crop=False, range=0.1):
         """
         Crops all the data in a 2D input dictionary, assuming its under the index ['data']
@@ -2755,8 +2025,10 @@ class SODLoader():
         """
 
         # Initialize normalization images array
-        if channels>1: normz = np.zeros(shape=(len(data), dims, dims, channels), dtype=np.float32)
-        else: normz = np.zeros(shape=(len(data), dims, dims), dtype=np.float32)
+        if channels > 1:
+            normz = np.zeros(shape=(len(data), dims, dims, channels), dtype=np.float32)
+        else:
+            normz = np.zeros(shape=(len(data), dims, dims), dtype=np.float32)
 
         # Normalize all the images. First retreive the images
         for key, dict in data.items(): normz[key, :, :] = dict['data']
@@ -2770,7 +2042,6 @@ class SODLoader():
 
         return data
 
-
     def save_tfrecords(self, data, xvals, test_size=50, file_root='data/Data'):
 
         """
@@ -2783,14 +2054,13 @@ class SODLoader():
         """
 
         # If only one file, just go head and save
-        if xvals ==1:
+        if xvals == 1:
 
             # Open the file writer
             writer = tf.python_io.TFRecordWriter((file_root + '.tfrecords'))
 
             # Loop through each example and append the protobuf with the specified features
             for key, values in data.items():
-
                 # Serialize to string
                 example = tf.train.Example(features=tf.train.Features(feature=self.create_feature_dict(values, key)))
 
@@ -2810,13 +2080,17 @@ class SODLoader():
 
             # Define writer name
             if xvals == 2:
-                if z == 0: filename = (file_root + '_Test' + '.tfrecords')
-                else: filename = (file_root + '_Train' + '.tfrecords')
+                if z == 0:
+                    filename = (file_root + '_Test' + '.tfrecords')
+                else:
+                    filename = (file_root + '_Train' + '.tfrecords')
 
             # For one file
-            elif xvals == 1: filename = (file_root + '.tfrecords')
+            elif xvals == 1:
+                filename = (file_root + '.tfrecords')
 
-            else: filename = (file_root + str(z) + '.tfrecords')
+            else:
+                filename = (file_root + str(z) + '.tfrecords')
 
             writer.append(tf.python_io.TFRecordWriter(filename))
 
@@ -2832,8 +2106,10 @@ class SODLoader():
                 example = tf.train.Example(features=tf.train.Features(feature=self.create_feature_dict(values, key)))
 
                 # Save this index as a serialized string in the protobuf
-                if tests < test_size: writer[0].write(example.SerializeToString())
-                else: writer[1].write(example.SerializeToString())
+                if tests < test_size:
+                    writer[0].write(example.SerializeToString())
+                else:
+                    writer[1].write(example.SerializeToString())
                 tests += 1
 
         else:
@@ -2852,55 +2128,6 @@ class SODLoader():
         # Close the file after writing
         for y in range(xvals): writer[y].close()
 
-
-    def save_segregated_tfrecords(self, xvals=2, data={}, ID_key='ID', file_root='data/data'):
-
-        """
-        Sequestered each patient by id key into unique tfrecords and saves
-        :param xvals: Number of different files to save
-        :param data: The input dictionary
-        :param ID_key: The key of the input dic that segregates the patient (i.e. MRN or Accno)
-        :param file_root: The root of the file to save
-        :return:
-        """
-
-        # Variables to track
-        dictonaries = [dict() for _ in range(xvals)]
-        ID_track = [list() for _ in range(xvals)]
-        index = 0
-
-        for idx, dic in data.items():
-
-            # Tracker to see if already added plus dict to use tracker
-            added = 0
-            target = index % xvals
-
-            # If this ID already exists in a dictionary, save to that dictionary
-            for z in range(xvals):
-
-                if dic[ID_key] in ID_track[z]:
-                    # Success, use this one
-                    dictonaries[z][index] = dic
-                    added = 1
-                    break
-
-            # Then continue
-            if added == 1:
-                index += 1
-                continue
-
-            # Failed to find a preexisting, save in the target dictionary
-            dictonaries[target][index] = dic
-            ID_track[target].append(dic[ID_key])
-            index += 1
-
-        # Now save the tfrecords
-        for z in range(xvals):
-            file = file_root + '_' + str(z)
-            print('Saving segregated tfrecords... %s in %s' % (len(dictonaries[z]), file))
-            self.save_tfrecords(dictonaries[z], 1, file_root=file)
-
-
     def convert_xray_negative(self, image):
 
         """
@@ -2916,53 +2143,15 @@ class SODLoader():
         # Do the image transform
         return ((image - average) * -1) + average
 
-
     """
          Tool functions: Most of these are hidden
     """
 
-    def _derive_key(self, password: bytes, salt: bytes, iterations: int = 100_000) -> bytes:
-        """Derive a secret key from a given password and salt"""
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(), length=32, salt=salt,
-            iterations=iterations, backend=default_backend())
-        return b64e(kdf.derive(password))
-
-    def password_encrypt(self, message: bytes, password: str, iterations: int = 100_000, return_string=False) -> bytes:
-        salt = secrets.token_bytes(16)
-        key = self._derive_key(password.encode(), salt, iterations)
-        message = message.encode('utf-8')
-        ret = b64e(
-            b'%b%b%b' % (
-                salt,
-                iterations.to_bytes(4, 'big'),
-                b64d(Fernet(key).encrypt(message)),
-            )
-        )
-        if return_string:
-            return ret.decode('utf-8')
-        else:
-            return ret
-
-    def password_decrypt(self, token: bytes, password: str, return_string=False) -> bytes:
-        decoded = b64d(token)
-        salt, iter, token = decoded[:16], decoded[16:20], b64e(decoded[20:])
-        iterations = int.from_bytes(iter, 'big')
-        key = self._derive_key(password.encode(), salt, iterations)
-        ret = Fernet(key).decrypt(token)
-        if return_string:
-            return ret.decode('utf-8')
-        else:
-            return ret
-
-
     def _int64_feature(self, value):
         return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
-
     def _bytes_feature(self, value):
         return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
-
 
     def create_feature_dict(self, data_to_write={}, id=1):
         """
@@ -2991,7 +2180,6 @@ class SODLoader():
 
         return feature_dict_write
 
-
     def imfill(self, img, connectivity=4):
         """
         Method to fill holes (binary).
@@ -3014,7 +2202,6 @@ class SODLoader():
 
         return ~filled  # The ~ operator flips bits (turns 1's into 0's and visa versa)
 
-
     def find_z_range(self, mask, min_size=0.01):
         """
         Method to find range of z-slices containing a mask surface area > min_size.
@@ -3022,7 +2209,6 @@ class SODLoader():
         z = np.sum(mask, axis=tuple(np.arange(1, len(mask.shape))))
         z = np.nonzero(z > (np.max(z) * min_size))
         return [z[0][0], z[0][-1]]
-
 
     def return_nonzero_pixel_ratio(sef, input, depth=3, dim_3d=False):
         """
@@ -3034,17 +2220,15 @@ class SODLoader():
         """
 
         # get total pixel count
-        if dim_3d: tot_pixels = input.shape[0] * input.shape[1] * input.shape[2]
-        else: tot_pixels = input.shape[0] * input.shape[1]
+        tot_pixels = input.shape[0] * input.shape[1]
 
         # Convert image to grayscale if not already
-        if depth==3: input = cv2.cvtColor(input, cv2.COLOR_BGR2GRAY)
+        if depth == 3: input = cv2.cvtColor(input, cv2.COLOR_BGR2GRAY)
 
         # Count the fraction of pixels that arent 0
         non_zero = np.sum(input.astype(np.bool)) / tot_pixels
 
         return non_zero
-
 
     def convert_grayscale(self, image):
         """
@@ -3054,7 +2238,6 @@ class SODLoader():
         """
 
         return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
 
     def calculate_image_mean_dict(self, data, index):
         """
@@ -3072,7 +2255,6 @@ class SODLoader():
             num += 1
 
         print('Mean %s, Std: %s' % ((mean / num), (std / num)))
-
 
     def sort_DICOMS_PE(self, ndimage, display=False, path=None):
 
@@ -3110,19 +2292,21 @@ class SODLoader():
                     this_series = ndimage[z].SeriesDescription
                     real.append(ndimage[z])
                     if not test_ID:
-                        if display: print ('Win on try 1: ', this_series, end = '')
+                        if display: print('Win on try 1: ', this_series, end='')
                         test_ID = True
 
-            except: continue
+            except:
+                continue
 
         # No original series must exist if this following try statement fails, load a derived primary axial instead
-        try: print (real[0].ImageType, end='')
+        try:
+            print(real[0].ImageType, end='')
         except:
 
             # Save only the original axial, use ID to save one series only
             del real
             real, this_ID, this_series, test_ID = [], None, None, None
-            if display: print ('First attempt to load DICOM failed, trying with less strict requirements')
+            if display: print('First attempt to load DICOM failed, trying with less strict requirements')
             for z in range(len(ndimage)):
 
                 # Try statement to skip non DICOM slices
@@ -3144,10 +2328,12 @@ class SODLoader():
                             if display: print('Win on try 2: ', this_series, end='')
                             test_ID = True
 
-                except: continue
+                except:
+                    continue
 
         # At this point, we're up shit's creek
-        try: print (real[0].ImageType)
+        try:
+            print(real[0].ImageType)
         except:
 
             # Save only the original axial, use ID to save one series only
@@ -3175,10 +2361,10 @@ class SODLoader():
                             if display: print('Win on try 3: ', this_series, end='')
                             test_ID = True
 
-                except: continue
+                except:
+                    continue
 
         return real
-
 
     def sort_DICOMS_Lung(self, ndimage, display=False, path=None):
 
@@ -3190,26 +2376,14 @@ class SODLoader():
         :return: real: the desired actual images
         """
 
-        """
-        We want SERIES Description Axial lung thin
-        Then bone, thin slice
-        Then any thin slice < 1
-        Then any thin slice < 2
-        Skip derived secondary reformatted
-        """
-
-        # Things we want
-        desired_Description = ['AXIAL', 'LUNG', 'THIN']
-
         # First define some values in the DICOM header that indicate files we want to skip
-        skipped_ImageTypes = ['MIP', 'SECONDARY', 'LOCALIZER', 'REFORMATTED', 'DERIVED']
-        skipped_Descriptions = ['WITH', 'TRACKER', 'SMART PREP', 'MONITORING', 'LOCATOR']
+        desired_ImageTypes = ['PRIMARY', 'AXIAL', 'ORIGINAL']
+        skipped_ImageTypes = ['MIP', 'SECONDARY', 'LOCALIZER', 'REFORMATTED']
+        skipped_Descriptions = ['BONE', 'LUNG', 'WITH', 'TRACKER', 'SMART PREP', 'MONITORING', 'LOCATOR']
         skipped_Studies = ['ABDOMEN', 'PELVIS']
 
-        # Placeholders
+        # Try saving only the original primary axial series. Use an ID to make sure to save only one series. Skip MIPS
         real, this_ID, this_series, test_ID = [], None, None, None
-
-        # First try finding our ideal study, axial lung thin
         for z in range(len(ndimage)):
 
             # Try statement to skip non DICOM slices
@@ -3217,43 +2391,39 @@ class SODLoader():
 
                 # Skip the things we want to skip
                 if ('ORIGINAL' not in ndimage[z].ImageType) or ('PRIMARY' not in ndimage[z].ImageType) or ('AXIAL' not in ndimage[z].ImageType): continue
-                if any(text not in ndimage[z].SeriesDescription.upper() for text in desired_Description): continue
-
                 if any(text in ndimage[z].ImageType for text in skipped_ImageTypes): continue
                 if any(text in ndimage[z].SeriesDescription.upper() for text in skipped_Descriptions): continue
                 if any(text in ndimage[z].StudyDescription.upper() for text in skipped_Studies): continue
                 if len(ndimage[z].SeriesDescription) == 0: continue
 
                 # Make Sure identification matches or is null then add to the volume
-                if (this_ID == None or this_ID == ndimage[z].ImageType) and (
-                        this_series == None or this_series == ndimage[z].SeriesDescription):
+                if (this_ID == None or this_ID == ndimage[z].ImageType) and (this_series == None or this_series == ndimage[z].SeriesDescription):
                     this_ID = ndimage[z].ImageType
                     this_series = ndimage[z].SeriesDescription
                     real.append(ndimage[z])
                     if not test_ID:
-                        if display: print('Win on try 1: ', ndimage[z].SeriesDescription, ndimage[z].SliceThickness, end='')
+                        if display: print('Win on try 1: ', this_series, end='')
                         test_ID = True
 
             except:
                 continue
 
-        # No original series must exist if this following try statement fails, load a body thin slice
-        try: print (real[0].ImageType, end='')
+        # No original series must exist if this following try statement fails, load a derived primary axial instead
+        try:
+            print(real[0].ImageType, end='')
         except:
 
             # Save only the original axial, use ID to save one series only
             del real
             real, this_ID, this_series, test_ID = [], None, None, None
-            if display: print ('No axial thin lungs, trying any <1.0mm')
+            if display: print('First attempt to load DICOM failed, trying with less strict requirements')
             for z in range(len(ndimage)):
 
                 # Try statement to skip non DICOM slices
                 try:
 
-                    # Now look for thin bodies
-                    if ('ORIGINAL' not in ndimage[z].ImageType) or ('PRIMARY' not in ndimage[z].ImageType) or ('AXIAL' not in ndimage[z].ImageType): continue
-                    if (float(ndimage[z].SliceThickness) > 0.99): continue
-
+                    # Less strict on image type
+                    if ('PRIMARY' not in ndimage[z].ImageType) or ('AXIAL' not in ndimage[z].ImageType): continue
                     if any(text in ndimage[z].ImageType for text in skipped_ImageTypes): continue
                     if any(text in ndimage[z].SeriesDescription.upper() for text in skipped_Descriptions): continue
                     if any(text in ndimage[z].StudyDescription.upper() for text in skipped_Studies): continue
@@ -3265,32 +2435,32 @@ class SODLoader():
                         this_series = ndimage[z].SeriesDescription
                         real.append(ndimage[z])
                         if not test_ID:
-                            if display: print('Win on try 2: ', ndimage[z].SeriesDescription, ndimage[z].SliceThickness, end='')
+                            if display: print('Win on try 2: ', this_series, end='')
                             test_ID = True
 
-                except: continue
+                except:
+                    continue
 
-        # Try for thicker slices
-        try: print (real[0].ImageType)
+        # At this point, we're up shit's creek
+        try:
+            print(real[0].ImageType)
         except:
 
             # Save only the original axial, use ID to save one series only
             del real
             real, this_ID, this_series, test_ID = [], None, None, None
-            if display: print('2nd attempt failed... trying any < 4mm')
+            skipped_Descriptions_shit = ['BONE', 'WITHOUT', 'TRACKER', 'SMART PREP', 'MONITORING']
+            if display: print('2nd attempt failed... up shits creek now...')
             for z in range(len(ndimage)):
 
                 # Try statement to skip non DICOM slices
                 try:
 
-                    # Now look for Any somewhat thin
+                    # Skip less image types, load lung windows if available, don't skip empty descriptions
                     if ('ORIGINAL' not in ndimage[z].ImageType) or ('PRIMARY' not in ndimage[z].ImageType) or ('AXIAL' not in ndimage[z].ImageType): continue
-                    if (float(ndimage[z].SliceThickness) > 4.99): continue
-
                     if any(text in ndimage[z].ImageType for text in skipped_ImageTypes): continue
-                    if any(text in ndimage[z].SeriesDescription.upper() for text in skipped_Descriptions): continue
-                    if any(text in ndimage[z].StudyDescription.upper() for text in skipped_Studies): continue
-                    if len(ndimage[z].SeriesDescription) == 0: continue
+                    if any(text in ndimage[z].SeriesDescription.upper() for text in skipped_Descriptions_shit): continue
+                    if any(text in ndimage[z].StudyDescription for text in skipped_Studies): continue
 
                     # Make Sure identification matches or is null then add to the volume
                     if (this_ID == None or this_ID == ndimage[z].ImageType) and (this_series == None or this_series == ndimage[z].SeriesDescription):
@@ -3298,44 +2468,13 @@ class SODLoader():
                         this_series = ndimage[z].SeriesDescription
                         real.append(ndimage[z])
                         if not test_ID:
-                            if display: print('Win on try 3: ', ndimage[z].SeriesDescription, ndimage[z].SliceThickness, end='')
-                            test_ID = True
-
-                except: continue
-
-        # Now we're just fucked
-        try: print(real[0].ImageType)
-        except:
-
-            # Save only the original axial, use ID to save one series only
-            del real
-            real, this_ID, this_series, test_ID = [], None, None, None
-            if display: print('Basically We will take anything now')
-            for z in range(len(ndimage)):
-
-                # Try statement to skip non DICOM slices
-                try:
-
-                    # Now look for Any somewhat thin
-                    if ('ORIGINAL' not in ndimage[z].ImageType) or ('PRIMARY' not in ndimage[z].ImageType) or ('AXIAL' not in ndimage[z].ImageType): continue
-                    if len(ndimage[z].SeriesDescription) == 0: continue
-
-                    # Make Sure identification matches or is null then add to the volume
-                    if (this_ID == None or this_ID == ndimage[z].ImageType) and (
-                            this_series == None or this_series == ndimage[z].SeriesDescription):
-                        this_ID = ndimage[z].ImageType
-                        this_series = ndimage[z].SeriesDescription
-                        real.append(ndimage[z])
-                        if not test_ID:
-                            if display: print('Win on try 4... : ', ndimage[z].SeriesDescription,
-                                              ndimage[z].SliceThickness, ndimage[z].ImageType, end='')
+                            if display: print('Win on try 3: ', this_series, end='')
                             test_ID = True
 
                 except:
                     continue
 
         return real
-
 
     def read_dcm_uncompressed(self, s):
 
@@ -3350,7 +2489,6 @@ class SODLoader():
                 image = image.reshape(s.Rows, s.Columns)
 
         return image
-
 
     def read_dcm_compressed(self, fname):
         """
@@ -3368,7 +2506,6 @@ class SODLoader():
                 img = img.reshape(int(header['Rows']), int(header['Columns']))
 
         return img.astype('int16')
-
 
     def compress_bits(self, vol):
         """
@@ -3392,7 +2529,6 @@ class SODLoader():
         # --- Convert floats
         if dtype == 'float':
             return vol.astype('float16')
-
 
     def sort_dcm(self, slices, fnames, verbose=False):
         """

@@ -27,7 +27,7 @@ TODO:
 # This is the baseline process that every container will have a copy of
 import tensorflow as tf
 import time, os
-import Hip_fracture_utils as utils
+import Utils as utils
 import SODTester as SDT
 import glob
 
